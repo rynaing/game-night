@@ -26,6 +26,8 @@ body {
 .logo { font-weight: 800; font-size: 1.15rem; letter-spacing: 0.02em; }
 .sound-ctl { display: flex; align-items: center; gap: 0.5rem; }
 #volSlider { width: 84px; accent-color: var(--accent); cursor: pointer; }
+#styleSelect { background: var(--card); color: var(--text); border: 1px solid #2c2650;
+  border-radius: 999px; padding: 0.25rem 0.5rem; font-size: 0.85rem; cursor: pointer; max-width: 7.5rem; }
 .room-badge {
   background: var(--card); border: 1px solid var(--accent);
   padding: 0.25rem 0.8rem; border-radius: 999px;
@@ -123,6 +125,7 @@ input:focus, select:focus { outline: 2px solid var(--accent); border-color: var(
 .score-table td { padding: 0.55rem 0.8rem; border-bottom: 1px solid #2c2650; font-size: 1.1rem; }
 .score-table tr.me td { color: var(--accent2); font-weight: 800; }
 .score-table td.pts { text-align: right; font-variant-numeric: tabular-nums; font-weight: 700; }
+.ans-pick { font-size: 0.85rem; color: var(--muted); font-weight: 400; margin-top: 0.15rem; }
 .rank-1 td:first-child::before { content: "🥇 "; }
 .rank-2 td:first-child::before { content: "🥈 "; }
 .rank-3 td:first-child::before { content: "🥉 "; }
