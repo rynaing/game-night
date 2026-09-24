@@ -23,6 +23,12 @@ body {
   display: flex; justify-content: space-between; align-items: center;
   padding: 0.9rem 1.2rem;
 }
+@media (max-width: 640px) {
+  .topbar { flex-wrap: wrap; justify-content: center; row-gap: 0.45rem; padding: 0.7rem 0.8rem; }
+  .topbar .logo { flex-basis: 100%; text-align: center; }
+  .topbar .room-badge { margin: 0 auto; }
+  .topbar .sound-ctl { flex-basis: 100%; justify-content: center; }
+}
 .logo { font-weight: 800; font-size: 1.15rem; letter-spacing: 0.02em; }
 .sound-ctl { display: flex; align-items: center; gap: 0.5rem; }
 #volSlider { width: 84px; accent-color: var(--accent); cursor: pointer; }
