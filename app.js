@@ -11,7 +11,7 @@ const sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
 
-const BUILD = "1790223006"; // deploy.sh replaces this with a timestamp
+const BUILD = "1790223236"; // deploy.sh replaces this with a timestamp
 
 // Stale-tab nudge: each deploy ships a fresh app.js?v= token, but a tab opened
 // before the deploy keeps running old code. Check for a newer build once a
@@ -438,6 +438,26 @@ async function loadWords_dict() {
   return WORDS;
 }
 const LETTER_BAG = "EEEEEEEEEEEEAAAAAAAAAIIIIIIIIIOOOOOOOONNNNNNRRRRRRTTTTTTLLLLSSSSUUUUDDDDGGGBBCCMMPPFFHHVVWWYYKJXQZ";
+// Every valid dictionary word formable from the tiles that nobody found.
+let missedCacheKey = "", missedCache = null;
+async function computeMissedWords() {
+  const key = room ? room.id + "|" + (room.anagram_letters || "") : "";
+  if (key && key === missedCacheKey) return missedCache;
+  await loadWords_dict();
+  const tiles = (room && room.anagram_letters) || "";
+  const minLen = anagramMinLen();
+  const foundSet = new Set(allWords.map((w) => w.word));
+  const missed = [...WORDS]
+    .filter((w) => w.length >= minLen && !foundSet.has(w) && canForm(w, tiles))
+    .sort((a, b) => b.length - a.length || a.localeCompare(b));
+  missedCacheKey = key; missedCache = missed;
+  return missed;
+}
+const missedWordsHTML = (missed) =>
+  `<h3 class="words-title">Missed words <small style="color:var(--muted)">(${missed.length})</small></h3>` +
+  (missed.length
+    ? `<div class="word-list missed-list">${missed.map((w) => `<span class="word-chip missed">${esc(w)}</span>`).join("")}</div>`
+    : `<p class="hint" style="text-align:center">None — you found them all! 🎉</p>`);
 const ANAGRAM_TARGET = 1500; // default par score for each anagram round
 const anagramTarget = () => (room && room.settings && room.settings.target) || ANAGRAM_TARGET;
 const anagramMinLen = () => (room && room.settings && room.settings.min_len) || 3;
@@ -789,7 +809,7 @@ async function renderHostGameOver(c) {
       const chips = ws.map((w) => `<span class="word-chip">${esc(w.word)}<small>+${w.points}</small></span>`).join("");
       return `<div class="words-group"><p class="words-name">${esc(p.name)} <small style="color:var(--muted)">(${ws.length})</small></p><div class="word-list">${chips}</div></div>`;
     }).join("");
-    wordsHTML = `<h3 class="words-title">Words found</h3>${groups || `<p class="hint" style="text-align:center">No words this time.</p>`}`;
+    wordsHTML = `<h3 class="words-title">Words found</h3>${groups || `<p class="hint" style="text-align:center">No words this time.</p>`}` + missedWordsHTML(await computeMissedWords());
   }
   c.innerHTML = `
     <p class="q-cat">Game over</p>
@@ -1209,7 +1229,7 @@ async function submitWord(word) {
   else { toast(found ? `+${pts} (repeat!) — nice!` : `+${pts} — nice!`, 1200); Music.sting("pop"); }
 }
 
-function renderPlayerGameOver(c) {
+async function renderPlayerGameOver(c) {
   $("playTimer").classList.add("hidden");
   const board = [...players].sort((a, b) => b.score - a.score);
   const rank = board.findIndex((p) => p.id === session.player_id) + 1;
@@ -1219,6 +1239,7 @@ function renderPlayerGameOver(c) {
   if (room.game_type === "anagram") {
     const mine = allWords.filter((w) => w.player_id === session.player_id);
     if (mine.length) wordsHTML = `<h3 class="words-title">Your words</h3><div class="word-list" style="justify-content:center">${mine.map((w) => `<span class="word-chip">${esc(w.word)}<small>+${w.points}</small></span>`).join("")}</div>`;
+    wordsHTML += missedWordsHTML(await computeMissedWords());
   }
   c.innerHTML = `
     <p class="q-cat">Game over</p>
