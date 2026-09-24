@@ -1,5 +1,5 @@
 /* ============================================================
-   GAME NIGHT — party games for the big screen (trivia + anagrams)
+   GAME NIGHT — party games for the big screen (trivia + anagrams + most likely to)
    Stack: GitHub Pages + Supabase (REST + Realtime Broadcast)
    ============================================================ */
 
@@ -11,7 +11,7 @@ const sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
 
-const BUILD = "1790227345"; // deploy.sh replaces this with a timestamp
+const BUILD = "1790256742"; // deploy.sh replaces this with a timestamp
 
 // Stale-tab nudge: each deploy ships a fresh app.js?v= token, but a tab opened
 // before the deploy keeps running old code. Check for a newer build once a
@@ -231,6 +231,56 @@ let stungReveal = "";     // room:id:index already stung for correct/wrong
 let WORDS = null;         // Scrabble word Set, lazy-loaded
 let pickedGame = "trivia";
 let otdbCategories = [];
+let hostVotes = [];       // mlt_votes rows for the current round (host view)
+let myVote = null;        // this player's vote for the current round
+
+/* ---------------- most likely to: prompt deck ----------------
+   Warm, funny, family-friendly — written for 2 people on a couch up to a
+   small party. Shown as "Most likely to <prompt>". */
+const MLT_PROMPTS = [
+  "fall asleep on the couch",
+  "hog the TV remote",
+  "cry at a movie",
+  "eat the last slice without asking",
+  "be late to everything",
+  "win an argument",
+  "lose their phone inside their own house",
+  "become a millionaire",
+  "survive on a deserted island",
+  "order dessert first",
+  "talk to a stranger like an old friend",
+  "forget why they walked into a room",
+  "sing in the shower",
+  "know every lyric to a song from 2008",
+  "trip over absolutely nothing",
+  "take 100 photos of the same sunset",
+  "start a group chat and never reply",
+  "finish everyone else's fries",
+  "cry laughing at their own joke",
+  "rewatch the same show five times",
+  "give the best advice",
+  "burn toast",
+  "become famous",
+  "fall for a scam phone call",
+  "remember everyone's birthday",
+  "nap through a party",
+  "start dancing when no music is playing",
+  "actually read the instructions first",
+  "assemble furniture without instructions (and fail)",
+  "bring snacks to everything",
+  "get lost with the GPS on",
+  "laugh at the wrong moment",
+  "win at board games (and brag about it)",
+  "adopt every stray animal they meet",
+  "stay up all night gaming",
+  "plan the entire trip",
+  "sleep through their alarm",
+  "quote movies nobody has seen",
+  "fix anything that's broken",
+  "start a business on a whim",
+  "cry at a wedding (even a stranger's)",
+  "eat cereal for dinner",
+];
 
 /* ---------------- helpers ---------------- */
 function show(id) {
@@ -318,6 +368,11 @@ function connectChannel() {
       if (room.status === "question") maybeAdvanceEarly();
     })
     .on("broadcast", { event: "words" }, async () => { await loadWords(); render(); })
+    .on("broadcast", { event: "votes" }, async () => {
+      if (session.role !== "host") return;
+      await loadMltVotes(); render();
+      if (room.status === "mlt_vote") maybeRevealMlt();
+    })
     .subscribe((status) => { rtReady = status === "SUBSCRIBED"; if (rtReady) flushPings(); });
 }
 // Queue pings until the channel is actually subscribed — sending on a
@@ -552,6 +607,7 @@ function initSetup() {
       pickedGame = c.dataset.game;
       $("triviaSettings").classList.toggle("hidden", pickedGame !== "trivia");
       $("anagramSettings").classList.toggle("hidden", pickedGame !== "anagram");
+      $("mltSettings").classList.toggle("hidden", pickedGame !== "mostlikely");
     };
   });
   if (!otdbCategories.length) loadCategories();
@@ -616,6 +672,10 @@ document.addEventListener("visibilitychange", () => {
   if (!document.hidden && session?.role === "host" && room && room.status !== "lobby" && room.status !== "game_over") holdWake();
 });
 async function startGame() {
+  if (room.game_type === "mostlikely" && players.length < 2) {
+    toast("Most Likely To needs at least 2 players!");
+    return;
+  }
   if (!players.length) { toast("Wait for at least one player to join!"); return; }
   stopLobbyPoll();
   Music.setMode("game");
@@ -625,7 +685,8 @@ async function startGame() {
   $("startGameBtn").disabled = true;
   try {
     if (room.game_type === "trivia") await startTrivia();
-    else await startAnagram();
+    else if (room.game_type === "anagram") await startAnagram();
+    else await startMlt();
   } catch (e) {
     toast("Couldn't start: " + e.message);
     $("startGameBtn").disabled = false;
@@ -720,6 +781,70 @@ async function startAnagram() {
   renderStage();
 }
 
+/* ---------------- host: most likely to ---------------- */
+// Prompts live in game_rooms.questions (jsonb array of strings); the round
+// is game_rooms.current_index. Votes go to mlt_votes via the submit_vote RPC.
+async function startMlt() {
+  const s = room.settings || {};
+  const prompts = shuffle(MLT_PROMPTS).slice(0, Math.min(s.rounds || 10, MLT_PROMPTS.length));
+  await api(`mlt_votes?room_id=eq.${session.room_id}`, { method: "DELETE" });
+  await updateRoom({
+    questions: prompts,
+    status: "mlt_vote",
+    current_index: 0,
+    round_ends_at: null,
+    anagram_letters: null,
+  });
+  await loadMltVotes();
+  renderStage();
+}
+
+async function nextMlt() {
+  hostVotes = [];
+  if (room.current_index + 1 >= room.questions.length) {
+    await updateRoom({ status: "game_over" });
+  } else {
+    await updateRoom({ current_index: room.current_index + 1, status: "mlt_vote", round_ends_at: null });
+    await loadMltVotes();
+  }
+  renderStage();
+}
+
+// The grade_mlt RPC tallies + scores atomically server-side (advisory lock per
+// room), so a manual reveal racing the auto-reveal can't double-award.
+let gradingMlt = false;
+async function gradeMlt() {
+  if (gradingMlt) return;
+  gradingMlt = true;
+  try {
+    const [res] = await rpc("grade_mlt", { p_room: session.room_id });
+    if (res && res.graded) {
+      await loadRoom(); await loadPlayers(); await loadMltVotes();
+      ping("scores"); ping("state");
+      renderStage();
+    }
+  } finally { gradingMlt = false; }
+}
+
+// If every current player has voted, skip the wait — same early-advance
+// courtesy the trivia mode has.
+async function maybeRevealMlt() {
+  if (!room || room.game_type !== "mostlikely" || room.status !== "mlt_vote") return;
+  await loadPlayers();
+  if (!players.length) return;
+  const voted = new Set(hostVotes.map((v) => v.player_id));
+  if (players.every((p) => voted.has(p.id))) {
+    toast("Everyone's voted! 🗳️", 1500);
+    setTimeout(() => gradeMlt(), 1200);
+  }
+}
+
+async function loadMltVotes() {
+  const r = await api(`mlt_votes?room_id=eq.${session.room_id}&prompt_index=eq.${room.current_index}&select=*`);
+  hostVotes = await r.json();
+  if (session.role === "player") myVote = hostVotes.find((v) => v.player_id === session.player_id) || null;
+}
+
 /* ---------------- host: stage rendering ---------------- */
 function renderStage() {
   show("view-stage");
@@ -733,6 +858,8 @@ function renderStage() {
   if (room.status === "question") renderHostQuestion(c);
   else if (room.status === "reveal") renderHostReveal(c);
   else if (room.status === "anagram_play") renderHostAnagram(c);
+  else if (room.status === "mlt_vote") renderHostMltVote(c);
+  else if (room.status === "mlt_reveal") renderHostMltReveal(c);
   else if (room.status === "game_over") renderHostGameOver(c);
   startTick();
 }
@@ -809,6 +936,46 @@ function renderHostAnagram(c) {
   $("stageTimer").classList.remove("hidden");
 }
 
+function renderHostMltVote(c) {
+  const prompt = room.questions[room.current_index];
+  const n = room.questions.length;
+  const voted = new Set(hostVotes.map((v) => v.player_id));
+  c.innerHTML = `
+    <p class="q-cat">Most likely to · ${room.current_index + 1}/${n}</p>
+    <p class="q-text">${esc(prompt)}</p>
+    <p class="q-meta">${voted.size} / ${players.length} voted</p>
+    <div class="row center"><button id="mltRevealBtn" class="btn primary big">Reveal →</button></div>`;
+  $("stageTimer").classList.add("hidden");
+  $("mltRevealBtn").onclick = () => gradeMlt();
+}
+
+function renderHostMltReveal(c) {
+  const prompt = room.questions[room.current_index];
+  const last = room.current_index + 1 >= room.questions.length;
+  const tally = {};
+  hostVotes.forEach((v) => { tally[v.target_id] = (tally[v.target_id] || 0) + 1; });
+  const max = Math.max(0, ...Object.values(tally));
+  const rows = [...players]
+    .sort((a, b) => (tally[b.id] || 0) - (tally[a.id] || 0))
+    .map((p) => {
+      const votes = tally[p.id] || 0;
+      const crown = votes === max && max > 0;
+      const bar = votes ? "🟣".repeat(Math.min(votes, 12)) : "—";
+      return `<tr class="${crown ? "rank-1" : ""}"><td>${crown ? "👑 " : ""}${esc(p.name)}</td><td>${bar} ${votes}</td><td class="pts">${p.score}</td></tr>`;
+    }).join("");
+  c.innerHTML = `
+    <div class="reveal-box">
+      <p class="q-cat">Most likely to…</p>
+      <p class="reveal-answer" style="font-size:1.4rem">${esc(prompt)}</p>
+      <table class="score-table">${rows}</table>
+    </div>`;
+  $("stageTimer").classList.add("hidden");
+  const nb = $("stageNextBtn");
+  nb.classList.remove("hidden");
+  nb.textContent = last ? "See results →" : "Next →";
+  nb.onclick = () => nextMlt();
+}
+
 async function renderHostGameOver(c) {
   Music.setMode(null);
   releaseWake();
@@ -846,6 +1013,7 @@ async function renderHostGameOver(c) {
 async function backToLobby() {
   await api(`game_answers?room_id=eq.${session.room_id}`, { method: "DELETE" });
   await api(`game_words?room_id=eq.${session.room_id}`, { method: "DELETE" });
+  await api(`mlt_votes?room_id=eq.${session.room_id}`, { method: "DELETE" });
   for (const p of players) await api(`game_players?id=eq.${p.id}`, { method: "PATCH", body: JSON.stringify({ score: 0 }) });
   await updateRoom({ status: "lobby", questions: [], current_index: 0, anagram_letters: null, round_ends_at: null });
   await loadPlayers();
@@ -860,6 +1028,7 @@ function prefillSetupFromRoom() {
   document.querySelectorAll(".pick-card").forEach((x) => x.classList.toggle("selected", x.dataset.game === pickedGame));
   $("triviaSettings").classList.toggle("hidden", pickedGame !== "trivia");
   $("anagramSettings").classList.toggle("hidden", pickedGame !== "anagram");
+  $("mltSettings").classList.toggle("hidden", pickedGame !== "mostlikely");
   if (pickedGame === "trivia") {
     selectedCats = [...(s.categories || [])];
     if (!otdbCategories.length) loadCategories();
@@ -868,6 +1037,8 @@ function prefillSetupFromRoom() {
     $("selDifficulty").value = s.difficulty || "";
     $("selCount").value = String(s.count || 10);
     $("chkAutoAdvance").checked = s.auto_advance !== false;
+  } else if (pickedGame === "mostlikely") {
+    $("selRounds").value = String(s.rounds || 10);
   } else {
     $("selSeconds").value = String(s.seconds || 60);
     $("selLetters").value = String(s.letters || 6);
@@ -901,9 +1072,11 @@ function cancelRematchEdit() {
   if (ret === "lobby") renderLobby(); else renderStage();
 }
 function gatherSettings() {
-  return pickedGame === "trivia"
-    ? { categories: [...selectedCats], difficulty: $("selDifficulty").value || null, count: parseInt($("selCount").value, 10), auto_advance: $("chkAutoAdvance").checked }
-    : { seconds: parseInt($("selSeconds").value, 10), letters: parseInt($("selLetters").value, 10), min_len: parseInt($("selMinLen").value, 10), allow_repeats: $("selRepeats").value };
+  if (pickedGame === "trivia")
+    return { categories: [...selectedCats], difficulty: $("selDifficulty").value || null, count: parseInt($("selCount").value, 10), auto_advance: $("chkAutoAdvance").checked };
+  if (pickedGame === "mostlikely")
+    return { rounds: parseInt($("selRounds").value, 10) };
+  return { seconds: parseInt($("selSeconds").value, 10), letters: parseInt($("selLetters").value, 10), min_len: parseInt($("selMinLen").value, 10), allow_repeats: $("selRepeats").value };
 }
 async function startRematch() {
   const errBox = $("setupError");
@@ -912,6 +1085,7 @@ async function startRematch() {
   try {
     await api(`game_answers?room_id=eq.${session.room_id}`, { method: "DELETE" });
     await api(`game_words?room_id=eq.${session.room_id}`, { method: "DELETE" });
+    await api(`mlt_votes?room_id=eq.${session.room_id}`, { method: "DELETE" });
     for (const p of players) await api(`game_players?id=eq.${p.id}`, { method: "PATCH", body: JSON.stringify({ score: 0 }) });
     await loadPlayers();
     await updateRoom({ game_type: pickedGame, settings: gatherSettings(), questions: [], current_index: 0, anagram_letters: null, round_ends_at: null });
@@ -969,7 +1143,7 @@ function startHostBeat() {
 function checkHostAlive() {
   const overlay = $("hostLostOverlay");
   if (!overlay) return;
-  const active = room && ["question", "reveal", "anagram_play"].includes(room.status);
+  const active = room && ["question", "reveal", "anagram_play", "mlt_vote", "mlt_reveal"].includes(room.status);
   const stale = active && room.host_seen_at && (Date.now() - new Date(room.host_seen_at).getTime() > 10000);
   overlay.classList.toggle("hidden", !stale);
 }
@@ -1086,7 +1260,7 @@ function render() {
   if (!room) return;
   // A live round means a (re)started game: re-arm the win fanfare so players
   // hear it at every game-over, not just the first one in the room.
-  if (room.status === "question" || room.status === "anagram_play") winStungFor = null;
+  if (room.status === "question" || room.status === "anagram_play" || room.status === "mlt_vote") winStungFor = null;
   if (room.status === "lobby") Music.setMode("lobby");
   else if (room.status === "game_over") { Music.setMode(null); if (winStungFor !== room.id) { winStungFor = room.id; Music.sting("win"); } }
   else Music.setMode("game");
@@ -1100,6 +1274,8 @@ function render() {
   } else if (room.status === "question") renderPlayerQuestion(c);
   else if (room.status === "reveal") renderPlayerReveal(c);
   else if (room.status === "anagram_play") renderPlayerAnagram(c);
+  else if (room.status === "mlt_vote") renderPlayerMltVote(c);
+  else if (room.status === "mlt_reveal") renderPlayerMltReveal(c);
   else if (room.status === "game_over") renderPlayerGameOver(c);
   startTick();
 }
@@ -1265,6 +1441,68 @@ async function submitWord(word) {
   const me2 = players.find((p) => p.id === session.player_id);
   if (me2) $("meScore").textContent = me2.score;
   toast(res.note === "repeat" ? `+${res.points} (repeat!) — nice!` : `+${res.points} — nice!`, 1200); Music.sting("pop");
+}
+
+/* ---------------- player: most likely to ---------------- */
+async function renderPlayerMltVote(c) {
+  $("playTimer").classList.add("hidden");
+  await loadMltVotes();
+  const prompt = room.questions[room.current_index];
+  const others = players.filter((p) => p.id !== session.player_id);
+  if (myVote) {
+    const t = players.find((p) => p.id === myVote.target_id);
+    c.innerHTML = `<p class="q-cat">Most likely to…</p><p class="q-text" style="font-size:1.3rem">${esc(prompt)}</p>
+      <p class="locked">Voted for ${esc(t?.name || "…")}! 🗳️</p>
+      <p class="hint" style="text-align:center">Waiting for everyone…</p>`;
+    return;
+  }
+  if (!others.length) {
+    c.innerHTML = `<p class="q-cat">Most likely to…</p><p class="q-text" style="font-size:1.3rem">${esc(prompt)}</p>
+      <p class="hint" style="text-align:center">Waiting for more players to join…</p>`;
+    return;
+  }
+  c.innerHTML = `<p class="q-cat">Most likely to…</p><p class="q-text" style="font-size:1.3rem">${esc(prompt)}</p>
+    <div class="answer-grid">${others.map((p) => `<button class="answer-btn" data-p="${p.id}">🗳️ ${esc(p.name)}</button>`).join("")}</div>`;
+  c.querySelectorAll(".answer-btn").forEach((b) => {
+    b.onclick = async () => {
+      b.disabled = true;
+      c.querySelectorAll(".answer-btn").forEach((x) => { x.disabled = true; if (x === b) x.classList.add("picked"); });
+      // Server is authoritative: the submit_vote RPC rejects self-votes,
+      // double votes, and votes after the round closed.
+      let ok = false;
+      try {
+        const [res] = await rpc("submit_vote", { p_room: session.room_id, p_player: session.player_id, p_target: b.dataset.p });
+        ok = !!(res && res.accepted);
+      } catch {}
+      if (!ok) toast("Vote didn't count — try again.");
+      else Music.sting("pop");
+      ping("votes");
+      render();
+    };
+  });
+}
+
+async function renderPlayerMltReveal(c) {
+  $("playTimer").classList.add("hidden");
+  await loadMltVotes();
+  const prompt = room.questions[room.current_index];
+  const tally = {};
+  hostVotes.forEach((v) => { tally[v.target_id] = (tally[v.target_id] || 0) + 1; });
+  const max = Math.max(0, ...Object.values(tally));
+  const crowned = max > 0 && (tally[session.player_id] || 0) === max;
+  const rows = [...players]
+    .sort((a, b) => (tally[b.id] || 0) - (tally[a.id] || 0))
+    .map((p) => {
+      const votes = tally[p.id] || 0;
+      const crown = votes === max && max > 0;
+      return `<tr class="${crown ? "rank-1" : ""}${p.id === session.player_id ? " me" : ""}"><td>${crown ? "👑 " : ""}${esc(p.name)}</td><td>${votes} vote${votes === 1 ? "" : "s"}</td><td class="pts">${p.score}</td></tr>`;
+    }).join("");
+  c.innerHTML = `<div class="reveal-box">
+      <p class="q-cat">Most likely to…</p>
+      <p class="reveal-answer" style="font-size:1.4rem">${esc(prompt)}</p>
+      <p class="locked">${crowned ? "👑 That's you! +100" : max > 0 ? "The people have spoken! 🗳️" : "No votes this round 😅"}</p>
+      <table class="score-table">${rows}</table>
+    </div>`;
 }
 
 async function renderPlayerGameOver(c) {
