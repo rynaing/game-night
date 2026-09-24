@@ -413,13 +413,17 @@ async function loadWords_dict() {
   return WORDS;
 }
 const LETTER_BAG = "EEEEEEEEEEEEAAAAAAAAAIIIIIIIIIOOOOOOOONNNNNNRRRRRRTTTTTTLLLLSSSSUUUUDDDDGGGBBCCMMPPFFHHVVWWYYKJXQZ";
-const ANAGRAM_TARGET = 1500; // par score shown for each anagram round
-let SIXES = null; // cached 6-letter dictionary words
-function genLetters() {
-  // Pick a real 6-letter word from the dictionary and scramble it, so there is
-  // always at least one 6-letter word hiding in the tiles.
-  if (!SIXES) SIXES = [...WORDS].filter((w) => w.length === 6);
-  const word = SIXES[Math.floor(Math.random() * SIXES.length)];
+const ANAGRAM_TARGET = 1500; // default par score for each anagram round
+const anagramTarget = () => (room && room.settings && room.settings.target) || ANAGRAM_TARGET;
+const anagramMinLen = () => (room && room.settings && room.settings.min_len) || 3;
+let WORDS_BY_LEN = {}; // cache of dictionary words by length
+function genLetters(n) {
+  // Pick a real n-letter word from the dictionary and scramble it, so there is
+  // always at least one n-letter word hiding in the tiles.
+  n = n || 6;
+  if (!WORDS_BY_LEN[n]) WORDS_BY_LEN[n] = [...WORDS].filter((w) => w.length === n);
+  const pool = WORDS_BY_LEN[n].length ? WORDS_BY_LEN[n] : [...WORDS].filter((w) => w.length === 6);
+  const word = pool[Math.floor(Math.random() * pool.length)];
   let arr = word.split(""), s;
   do {
     for (let i = arr.length - 1; i > 0; i--) {
@@ -619,7 +623,7 @@ async function startAnagram() {
   const s = room.settings || {};
   await loadWords_dict();
   await updateRoom({
-    anagram_letters: genLetters(),
+    anagram_letters: genLetters(s.letters || 6),
     status: "anagram_play",
     round_ends_at: new Date(Date.now() + (s.seconds || 60) * 1000).toISOString(),
   });
@@ -704,7 +708,7 @@ function renderHostAnagram(c) {
   }).join("");
   const latest = allWords.slice(-3).reverse().map((w) => `${esc(w.game_players?.name || "?")}: ${esc(w.word)}`).join(" · ");
   c.innerHTML = `
-    <p class="q-cat">Make words · 3+ letters · 🎯 ${ANAGRAM_TARGET.toLocaleString()} target</p>
+    <p class="q-cat">Make words · ${anagramMinLen()}+ letters · 🎯 ${anagramTarget().toLocaleString()} target</p>
     <div class="letters">${tiles}</div>
     <table class="score-table">${board}</table>
     <p class="word-feed">${esc(latest)}</p>`;
@@ -760,6 +764,9 @@ function openRematchSettings() {
     $("chkAutoAdvance").checked = s.auto_advance !== false;
   } else {
     $("selSeconds").value = String(s.seconds || 60);
+    $("selLetters").value = String(s.letters || 6);
+    $("selMinLen").value = String(s.min_len || 3);
+    $("selTarget").value = String(s.target || 1500);
   }
   $("setupTitle").textContent = "Rematch settings";
   $("createRoomBtn").textContent = "Start game →";
@@ -774,7 +781,7 @@ function cancelRematchEdit() {
 function gatherSettings() {
   return pickedGame === "trivia"
     ? { categories: [...selectedCats], difficulty: $("selDifficulty").value || null, count: parseInt($("selCount").value, 10), auto_advance: $("chkAutoAdvance").checked }
-    : { seconds: parseInt($("selSeconds").value, 10) };
+    : { seconds: parseInt($("selSeconds").value, 10), letters: parseInt($("selLetters").value, 10), min_len: parseInt($("selMinLen").value, 10), target: parseInt($("selTarget").value, 10) };
 }
 async function startRematch() {
   const errBox = $("setupError");
@@ -1000,7 +1007,7 @@ function renderPlayerAnagram(c) {
   if (!input || c.dataset.anagramRound !== roundKey) {
     const tiles = room.anagram_letters.split("").map((ch) => `<div class="tile">${ch}</div>`).join("");
     c.innerHTML = `
-      <p class="q-cat">Make words · 3+ letters · 🎯 ${ANAGRAM_TARGET.toLocaleString()} target</p>
+      <p class="q-cat">Make words · ${anagramMinLen()}+ letters · 🎯 ${anagramTarget().toLocaleString()} target</p>
       <div class="letters">${tiles}</div>
       <div class="word-row">
         <input id="wordInput" maxlength="6" placeholder="TYPE A WORD" autocomplete="off" autocapitalize="characters" spellcheck="false" />
@@ -1036,7 +1043,7 @@ function refreshChips() {
 }
 
 async function submitWord(word) {
-  if (word.length < 3) { toast("Words must be 3+ letters."); return; }
+  if (word.length < anagramMinLen()) { toast(`Words must be ${anagramMinLen()}+ letters.`); return; }
   if (!canForm(word, room.anagram_letters)) { toast("Use only the letters shown!"); return; }
   await loadWords_dict();
   if (!WORDS.has(word)) { toast(`"${word}" isn't in the Scrabble dictionary.`); Music.sting("wrong"); return; }
@@ -1061,7 +1068,7 @@ async function submitWord(word) {
     try { newScore = await rpc("add_score", { p_player_id: me.id, p_points: pts }); }
     catch { newScore = me.score + pts; }
   }
-  const crossed = me && me.score < ANAGRAM_TARGET && newScore >= ANAGRAM_TARGET;
+  const crossed = me && me.score < anagramTarget() && newScore >= anagramTarget();
   await loadPlayers(); await loadWords();
   ping("words"); ping("scores");
   refreshChips();
@@ -1069,7 +1076,7 @@ async function submitWord(word) {
   if (input) { input.value = ""; input.focus(); }
   const me2 = players.find((p) => p.id === session.player_id);
   if (me2) $("meScore").textContent = me2.score;
-  if (crossed) { toast(`🎯 ${ANAGRAM_TARGET.toLocaleString()} target smashed!`, 2000); Music.sting("win"); }
+  if (crossed) { toast(`🎯 ${anagramTarget().toLocaleString()} target smashed!`, 2000); Music.sting("win"); }
   else { toast(`+${pts} — nice!`, 1200); Music.sting("pop"); }
 }
 
