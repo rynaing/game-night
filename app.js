@@ -41,6 +41,11 @@ const Music = (() => {
     if (v >= 0 && v <= 100) volume = v / 100;
   } catch {}
   let mode = null, step = 0, nextT = 0, timer = null, lastTickSec = -1;
+  let gameStyle = "gameshow"; // gameshow | kawaii | chiptune
+  try {
+    const gs = localStorage.getItem("gn_music_style");
+    if (["gameshow", "kawaii", "chiptune"].includes(gs)) gameStyle = gs;
+  } catch {}
 
   const mf = (m) => 440 * Math.pow(2, (m - 69) / 12); // midi -> hz
 
@@ -55,10 +60,17 @@ const Music = (() => {
     lobby: { bpm: 120,
       bass: [48,0,48,0,55,0,48,0,48,0,48,0,55,0,53,0, 53,0,53,0,60,0,53,0,53,0,53,0,60,0,57,0, 55,0,55,0,62,0,55,0,55,0,55,0,62,0,59,0, 48,0,48,0,55,0,48,0,53,0,55,0,48,0,0,0],
       lead: [72,0,76,0,79,0,76,0,81,0,79,0,76,0,72,0, 77,0,81,0,84,0,81,0,79,0,81,0,77,0,74,0, 74,0,79,0,83,0,79,0,81,0,83,0,86,0,83,0, 84,0,81,0,79,0,76,0,74,0,72,0,74,0,0,0] },
-    game: { bpm: 132,
+    game_gameshow: { bpm: 132,
       bass: [45,0,45,0,45,0,52,0,45,0,45,0,45,0,52,0, 41,0,41,0,41,0,48,0,41,0,41,0,41,0,48,0, 48,0,48,0,48,0,55,0,48,0,48,0,48,0,55,0, 43,0,43,0,43,0,50,0,43,0,43,0,50,0,43,0],
       lead: [81,0,84,81,0,79,0,81,84,0,81,0,79,0,76,0, 77,0,81,77,0,84,0,81,77,0,74,0,77,0,0,0, 79,0,84,79,0,76,0,79,84,0,86,0,84,0,79,0, 83,0,79,83,0,86,0,83,79,0,77,0,79,0,74,0] },
+    game_kawaii: { bpm: 140, bassType: "triangle", bassVol: 0.3, leadType: "triangle", leadVol: 0.35,
+      bass: [48,0,48,0,55,0,52,0,48,0,48,0,55,0,52,0, 43,0,43,0,50,0,47,0,43,0,43,0,50,0,47,0, 45,0,45,0,52,0,48,0,45,0,45,0,52,0,48,0, 41,0,41,0,48,0,45,0,41,0,41,0,48,0,45,0],
+      lead: [72,0,76,0,79,0,76,0,81,0,79,0,76,0,72,0, 74,0,79,0,83,0,79,0,81,0,79,0,74,0,71,0, 72,0,76,0,81,0,76,0,84,0,81,0,79,0,76,0, 77,0,81,0,79,0,77,0,76,0,74,0,72,0,0,0] },
+    game_chiptune: { bpm: 150, bassType: "square", bassVol: 0.24, leadType: "square", leadVol: 0.3,
+      bass: [45,0,57,0,45,0,57,0,45,0,57,0,60,0,57,0, 41,0,53,0,41,0,53,0,41,0,53,0,55,0,53,0, 48,0,60,0,48,0,60,0,48,0,60,0,62,0,60,0, 43,0,55,0,43,0,55,0,43,0,55,0,59,0,55,0],
+      lead: [69,72,76,79,76,72,76,79,81,79,76,72,76,79,76,72, 65,69,72,77,72,69,72,77,81,77,72,69,72,77,72,69, 72,76,79,84,79,76,79,84,79,76,72,76,79,76,72,0, 67,71,74,79,74,71,79,74,83,79,74,71,79,74,71,0] },
   };
+  function songFor(m) { return m === "game" ? SONGS["game_" + gameStyle] : SONGS[m]; }
 
   function ensure() {
     if (ctx) { if (ctx.state === "suspended") ctx.resume().catch(() => {}); return true; }
@@ -83,8 +95,14 @@ const Music = (() => {
     o.start(t); o.stop(t + dur + 0.05);
   }
   function schedule() {
-    const song = SONGS[mode];
+    const song = songFor(mode);
     if (!song || !ctx) return;
+    // If the AudioContext got suspended (screen lock, hidden tab, iOS backgrounding),
+    // its clock freezes — don't schedule into a frozen clock, just try to resume.
+    if (ctx.state !== "running") { ctx.resume().catch(() => {}); return; }
+    // If we fell behind (throttled tab / just resumed), snap forward instead of
+    // burst-scheduling a wall of catch-up notes.
+    if (nextT < ctx.currentTime - 0.3) nextT = ctx.currentTime + 0.06;
     const stepDur = 60 / song.bpm / 4;
     const bt = song.bassType || "square", lt = song.leadType || "square";
     const bv = song.bassVol ?? 0.28, lv = song.leadVol ?? 0.34;
@@ -97,12 +115,19 @@ const Music = (() => {
   }
   function startLoop() {
     stopLoop();
-    if (!ctx || !mode || !SONGS[mode]) return;
+    if (!ctx || !mode || !songFor(mode)) return;
     step = 0; nextT = ctx.currentTime + 0.06;
     timer = setInterval(schedule, 40);
   }
   function stopLoop() { if (timer) { clearInterval(timer); timer = null; } }
   function applyGain() { if (master) master.gain.value = muted ? 0 : volume * 0.5; }
+
+  // Watchdog: if a song should be playing but the scheduler died (throttled/crashed
+  // tab), restart it. Runs on its own interval so it survives scheduler starvation.
+  setInterval(() => {
+    try { if (mode && songFor(mode) && ctx && ctx.state === "running" && !timer) startLoop(); }
+    catch {}
+  }, 2000);
 
   return {
     unlock() { if (ensure() && mode && !timer) startLoop(); },
@@ -110,7 +135,7 @@ const Music = (() => {
       if (m === mode) return;
       mode = m;
       if (!ctx) return;
-      if (mode && SONGS[mode]) startLoop(); else stopLoop();
+      if (mode && songFor(mode)) startLoop(); else stopLoop();
     },
     sting(name) {
       if (!ensure()) return;
@@ -139,6 +164,14 @@ const Music = (() => {
       if (volume > 0 && muted) { muted = false; try { localStorage.setItem(LS, "0"); } catch {} }
       applyGain();
       return muted;
+    },
+    getGameStyle() { return gameStyle; },
+    setGameStyle(s) {
+      if (!["gameshow", "kawaii", "chiptune"].includes(s) || s === gameStyle) return gameStyle;
+      gameStyle = s;
+      try { localStorage.setItem("gn_music_style", s); } catch {}
+      if (mode === "game" && ctx) startLoop(); // switch immediately mid-game
+      return gameStyle;
     },
     getVolume() { return volume; },
     isMuted() { return muted; },
@@ -544,7 +577,7 @@ async function gradeTrivia() {
     a.is_correct = correct; a.points = pts; // keep local copy fresh for the reveal screen
     if (pts) {
       const p = players.find((x) => x.id === a.player_id);
-      if (p) await api(`game_players?id=eq.${p.id}`, { method: "PATCH", body: JSON.stringify({ score: p.score + pts }) });
+      if (p) await rpc("add_score", { p_player_id: p.id, p_points: pts });
     }
   }
   await loadPlayers();
@@ -597,6 +630,7 @@ async function startAnagram() {
 /* ---------------- host: stage rendering ---------------- */
 function renderStage() {
   show("view-stage");
+  Music.setMode("game"); // no-op when already playing; recovers a desynced host
   $("stageNextBtn").classList.add("hidden");
   const eb = $("stageEndBtn");
   eb.classList.remove("hidden");
@@ -625,7 +659,8 @@ function renderHostReveal(c) {
   const rows = [...players].sort((a, b) => b.score - a.score).map((p, i) => {
     const a = hostAnswers.find((x) => x.player_id === p.id);
     const mark = !a ? "—" : a.is_correct ? `✅ +${a.points}` : "❌";
-    return `<tr class="${i === 0 ? "rank-1" : ""}"><td>${esc(p.name)}</td><td>${mark}</td><td class="pts">${p.score}</td></tr>`;
+    const txt = a && a.answer ? `<div class="ans-pick">${esc(a.answer)}</div>` : "";
+    return `<tr class="${i === 0 ? "rank-1" : ""}"><td>${esc(p.name)}${txt}</td><td>${mark}</td><td class="pts">${p.score}</td></tr>`;
   }).join("");
   const last = room.current_index + 1 >= room.questions.length;
   c.innerHTML = `
@@ -992,8 +1027,12 @@ async function submitWord(word) {
   });
   if (!r.ok) { toast("Someone beat you to it, or try again."); return; }
   const me = players.find((p) => p.id === session.player_id);
-  if (me) await api(`game_players?id=eq.${me.id}`, { method: "PATCH", body: JSON.stringify({ score: me.score + pts }) });
-  const crossed = me && me.score < ANAGRAM_TARGET && me.score + pts >= ANAGRAM_TARGET;
+  let newScore = me ? me.score : 0;
+  if (me) {
+    try { newScore = await rpc("add_score", { p_player_id: me.id, p_points: pts }); }
+    catch { newScore = me.score + pts; }
+  }
+  const crossed = me && me.score < ANAGRAM_TARGET && newScore >= ANAGRAM_TARGET;
   await loadPlayers(); await loadWords();
   ping("words"); ping("scores");
   refreshChips();
@@ -1040,6 +1079,8 @@ function wire() {
   const syncMuteIcon = () => { $("muteBtn").textContent = Music.isMuted() ? "🔇" : "🔊"; };
   syncMuteIcon();
   $("muteBtn").onclick = () => { Music.toggleMute(); syncMuteIcon(); };
+  const ss = $("styleSelect");
+  if (ss) { ss.value = Music.getGameStyle(); ss.onchange = () => { Music.unlock(); Music.setGameStyle(ss.value); }; }
   const vs = $("volSlider");
   if (vs) {
     vs.value = Math.round(Music.getVolume() * 100);
