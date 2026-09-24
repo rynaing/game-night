@@ -777,21 +777,35 @@ async function renderPlayerReveal(c) {
 
 function renderPlayerAnagram(c) {
   $("playTimer").classList.remove("hidden");
-  const tiles = room.anagram_letters.split("").map((ch) => `<div class="tile">${ch}</div>`).join("");
+  // Build the input layout once per round. Later renders only refresh the word
+  // chips — rebuilding the input would drop the iOS keyboard and wipe half-typed words.
+  const roundKey = room.id + "|" + (room.round_ends_at || "");
+  let input = $("wordInput");
+  if (!input || c.dataset.anagramRound !== roundKey) {
+    const tiles = room.anagram_letters.split("").map((ch) => `<div class="tile">${ch}</div>`).join("");
+    c.innerHTML = `
+      <p class="q-cat">Make words · 3+ letters</p>
+      <div class="letters">${tiles}</div>
+      <div class="word-row">
+        <input id="wordInput" maxlength="6" placeholder="TYPE A WORD" autocomplete="off" autocapitalize="characters" spellcheck="false" />
+        <button id="wordGo" class="btn primary">✓</button>
+      </div>
+      <div class="word-list" id="anagramChips"></div>`;
+    c.dataset.anagramRound = roundKey;
+    input = $("wordInput");
+    const submit = () => submitWord(input.value.trim().toUpperCase());
+    $("wordGo").onclick = submit;
+    input.addEventListener("keydown", (e) => { if (e.key === "Enter") submit(); });
+    input.focus();
+  }
+  refreshChips();
+}
+
+function refreshChips() {
+  const el = $("anagramChips");
+  if (!el) return;
   const chips = myWords.map((w) => `<span class="word-chip">${esc(w.word)}<small>+${w.points}</small></span>`).join("");
-  c.innerHTML = `
-    <p class="q-cat">Make words · 3+ letters</p>
-    <div class="letters">${tiles}</div>
-    <div class="word-row">
-      <input id="wordInput" maxlength="6" placeholder="TYPE A WORD" autocomplete="off" autocapitalize="characters" spellcheck="false" />
-      <button id="wordGo" class="btn primary">✓</button>
-    </div>
-    <div class="word-list">${chips || `<span style="color:var(--muted)">No words yet — go!</span>`}</div>`;
-  const input = $("wordInput");
-  input.focus();
-  const submit = () => submitWord(input.value.trim().toUpperCase());
-  $("wordGo").onclick = submit;
-  input.addEventListener("keydown", (e) => { if (e.key === "Enter") submit(); });
+  el.innerHTML = chips || `<span style="color:var(--muted)">No words yet — go!</span>`;
 }
 
 async function submitWord(word) {
@@ -811,7 +825,11 @@ async function submitWord(word) {
   if (me) await api(`game_players?id=eq.${me.id}`, { method: "PATCH", body: JSON.stringify({ score: me.score + pts }) });
   await loadPlayers(); await loadWords();
   ping("words"); ping("scores");
-  render();
+  refreshChips();
+  const input = $("wordInput");
+  if (input) { input.value = ""; input.focus(); }
+  const me2 = players.find((p) => p.id === session.player_id);
+  if (me2) $("meScore").textContent = me2.score;
   toast(`+${pts} — nice!`, 1200);
   Music.sting("pop");
 }
