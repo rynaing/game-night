@@ -25,6 +25,103 @@ function makeQr(url) {
   return "https://api.qrserver.com/v1/create-qr-code/?size=220x220&data=" + encodeURIComponent(url);
 }
 
+/* ---------------- music: procedural game-show audio ----------------
+   Everything is synthesized live with the Web Audio API — no audio files,
+   no downloads, no licensing. Starts only after the user taps something
+   (browsers block sound before that). */
+const Music = (() => {
+  const LS = "gn_muted";
+  let ctx = null, master = null;
+  let muted = false;
+  try { muted = localStorage.getItem(LS) === "1"; } catch {}
+  let mode = null, step = 0, nextT = 0, timer = null, lastTickSec = -1;
+
+  const mf = (m) => 440 * Math.pow(2, (m - 69) / 12); // midi -> hz
+
+  // 4 bars x 16 steps of midi notes (0 = rest). Lobby: bouncy C-G-Am-F. Game: driving Am-F-C-G.
+  const SONGS = {
+    lobby: { bpm: 116,
+      bass: [48,0,48,0,55,0,48,0,48,0,48,0,55,0,52,0, 43,0,43,0,50,0,43,0,43,0,43,0,50,0,47,0, 45,0,45,0,52,0,45,0,45,0,45,0,52,0,48,0, 41,0,41,0,48,0,41,0,41,0,41,0,48,0,45,0],
+      lead: [64,0,67,0,72,0,67,0,64,0,0,0,67,0,64,0, 62,0,67,0,71,0,67,0,62,0,0,0,67,0,62,0, 64,0,69,0,72,0,69,0,64,0,0,0,69,0,64,0, 65,0,69,0,72,0,69,0,65,0,0,0,69,0,72,0] },
+    game: { bpm: 132,
+      bass: [45,45,45,45,45,45,45,52,45,45,45,45,45,45,52,45, 41,41,41,41,41,41,41,48,41,41,41,41,41,41,48,41, 48,48,48,48,48,48,48,55,48,48,48,48,48,48,55,48, 43,43,43,43,43,43,43,50,43,43,43,43,43,43,50,43],
+      lead: [69,0,0,0,0,0,72,0,0,0,69,0,67,0,64,0, 69,0,0,0,0,0,72,0,0,0,65,0,69,0,65,0, 67,0,0,0,0,0,72,0,0,0,67,0,64,0,67,0, 67,0,0,0,0,0,71,0,0,0,67,0,62,0,64,0] },
+  };
+
+  function ensure() {
+    if (ctx) { if (ctx.state === "suspended") ctx.resume().catch(() => {}); return true; }
+    try {
+      const AC = window.AudioContext || window.webkitAudioContext;
+      ctx = new AC();
+      master = ctx.createGain();
+      master.gain.value = muted ? 0 : 0.16;
+      master.connect(ctx.destination);
+      return true;
+    } catch { return false; }
+  }
+  function tone(freq, t, dur, type, vol, slideTo) {
+    const o = ctx.createOscillator(), g = ctx.createGain();
+    o.type = type || "square";
+    o.frequency.setValueAtTime(freq, t);
+    if (slideTo) o.frequency.exponentialRampToValueAtTime(slideTo, t + dur);
+    g.gain.setValueAtTime(0.0001, t);
+    g.gain.exponentialRampToValueAtTime(Math.max(0.0002, vol || 0.5), t + 0.012);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+    o.connect(g); g.connect(master);
+    o.start(t); o.stop(t + dur + 0.05);
+  }
+  function schedule() {
+    const song = SONGS[mode];
+    if (!song || !ctx) return;
+    const stepDur = 60 / song.bpm / 4;
+    while (nextT < ctx.currentTime + 0.15) {
+      const i = step % 64, b = song.bass[i], l = song.lead[i];
+      if (b) tone(mf(b), nextT, stepDur * 0.9, "triangle", 0.5);
+      if (l) tone(mf(l), nextT, stepDur * 0.9, "square", 0.26);
+      nextT += stepDur; step++;
+    }
+  }
+  function startLoop() {
+    stopLoop();
+    if (!ctx || !mode || !SONGS[mode]) return;
+    step = 0; nextT = ctx.currentTime + 0.06;
+    timer = setInterval(schedule, 40);
+  }
+  function stopLoop() { if (timer) { clearInterval(timer); timer = null; } }
+
+  return {
+    unlock() { if (ensure() && mode && !timer) startLoop(); },
+    setMode(m) {
+      if (m === mode) return;
+      mode = m;
+      if (!ctx) return;
+      if (mode && SONGS[mode]) startLoop(); else stopLoop();
+    },
+    sting(name) {
+      if (!ensure()) return;
+      const t = ctx.currentTime + 0.01;
+      if (name === "click") tone(880, t, 0.06, "square", 0.3);
+      else if (name === "pop") tone(660, t, 0.09, "square", 0.4, 990);
+      else if (name === "join") { tone(523, t, 0.09, "square", 0.4); tone(784, t + 0.09, 0.12, "square", 0.4); }
+      else if (name === "tick") tone(1250, t, 0.045, "square", 0.2);
+      else if (name === "correct") [72, 76, 79].forEach((n, i) => tone(mf(n), t + i * 0.09, 0.14, "square", 0.45));
+      else if (name === "wrong") { tone(mf(64), t, 0.16, "sawtooth", 0.32); tone(mf(60), t + 0.16, 0.28, "sawtooth", 0.32); }
+      else if (name === "win") [72, 76, 79, 84].forEach((n, i) => tone(mf(n), t + i * 0.13, i === 3 ? 0.5 : 0.14, "triangle", 0.5));
+    },
+    tick(sec) {
+      if (sec >= 1 && sec <= 5 && sec !== lastTickSec) { lastTickSec = sec; this.sting("tick"); }
+      else if (sec < 1 || sec > 5) lastTickSec = -1;
+    },
+    toggleMute() {
+      muted = !muted;
+      try { localStorage.setItem(LS, muted ? "1" : "0"); } catch {}
+      if (master) master.gain.value = muted ? 0 : 0.16;
+      return muted;
+    },
+    isMuted() { return muted; },
+  };
+})();
+
 /* ---------------- question packs (2.0-ready) ----------------
    A pack is { id, name, fetchQuestions(opts) -> [{category, question,
    correct_answer, incorrect_answers[]}] }. Family packs slot in here. */
@@ -47,6 +144,9 @@ let myWords = [];         // this player's words (player view)
 let allWords = [];        // all words this round (host view)
 let rtChannel = null;
 let tickTimer = null;
+let grading = false;      // gradeTrivia re-entry guard (timer vs early-advance)
+let winStungFor = null;   // room id that already got the win fanfare
+let stungReveal = "";     // room:id:index already stung for correct/wrong
 let WORDS = null;         // Scrabble word Set, lazy-loaded
 let pickedGame = "trivia";
 let otdbCategories = [];
@@ -106,8 +206,13 @@ function connectChannel() {
   rtChannel = sb.channel("game:" + session.room_id, { config: { broadcast: { ack: true } } });
   rtChannel
     .on("broadcast", { event: "state" }, async () => { await loadRoom(); render(); })
-    .on("broadcast", { event: "players" }, async () => { await loadPlayers(); render(); })
-    .on("broadcast", { event: "answers" }, async () => { if (session.role === "host") { await loadHostAnswers(); render(); } })
+    .on("broadcast", { event: "players" }, async () => { await loadPlayers(); render(); if (session.role === "host") Music.sting("join"); })
+    .on("broadcast", { event: "scores" }, async () => { await loadPlayers(); render(); })
+    .on("broadcast", { event: "answers" }, async () => {
+      if (session.role !== "host") return;
+      await loadHostAnswers(); render();
+      if (room.status === "question") maybeAdvanceEarly();
+    })
     .on("broadcast", { event: "words" }, async () => { await loadWords(); render(); })
     .subscribe((status) => { rtReady = status === "SUBSCRIBED"; if (rtReady) flushPings(); });
 }
@@ -279,6 +384,7 @@ async function createRoom() {
   try {
     const [res] = await rpc("create_game_room", { gtype: pickedGame, p_settings: settings, p_pack_id: ACTIVE_PACK });
     session = { role: "host", room_id: res.room_id, room_code: res.room_code };
+    winStungFor = null;
     saveSession();
     await loadRoom(); await loadPlayers();
     connectChannel();
@@ -295,6 +401,7 @@ async function createRoom() {
 
 function renderLobby() {
   show("view-lobby");
+  Music.setMode("lobby");
   $("lobbyCode").textContent = room.room_code;
   $("lobbyQr").src = makeQr(joinUrl(room.room_code));
   $("lobbyUrl").textContent = joinUrl(room.room_code);
@@ -306,6 +413,7 @@ function renderLobby() {
 async function startGame() {
   if (!players.length) { toast("Wait for at least one player to join!"); return; }
   stopLobbyPoll();
+  Music.setMode("game");
   $("startGameBtn").disabled = true;
   try {
     if (room.game_type === "trivia") await startTrivia();
@@ -338,6 +446,9 @@ async function startTrivia() {
 }
 
 async function gradeTrivia() {
+  if (grading) return;
+  grading = true;
+  try {
   const q = room.questions[room.current_index];
   const r = await api(`game_answers?room_id=eq.${session.room_id}&question_index=eq.${room.current_index}&select=*`);
   const answers = await r.json();
@@ -353,9 +464,23 @@ async function gradeTrivia() {
     }
   }
   await loadPlayers();
+  ping("scores");
   hostAnswers = answers;
   await updateRoom({ status: "reveal" });
   renderStage();
+  } finally { grading = false; }
+}
+
+// If every current player has locked in an answer, skip the rest of the timer.
+async function maybeAdvanceEarly() {
+  if (!room || room.game_type !== "trivia" || room.status !== "question") return;
+  await loadPlayers();
+  if (!players.length) return;
+  const answered = new Set(hostAnswers.map((a) => a.player_id));
+  if (players.every((p) => answered.has(p.id))) {
+    toast("Everyone's locked in!", 1500);
+    await gradeTrivia();
+  }
 }
 
 async function nextTrivia() {
@@ -444,6 +569,8 @@ function renderHostAnagram(c) {
 }
 
 function renderHostGameOver(c) {
+  Music.setMode(null);
+  if (winStungFor !== room.id) { winStungFor = room.id; Music.sting("win"); }
   const board = [...players].sort((a, b) => b.score - a.score);
   const winner = board[0];
   const rows = board.map((p, i) => `<tr class="rank-${i + 1}"><td>${esc(p.name)}</td><td class="pts">${p.score}</td></tr>`).join("");
@@ -475,6 +602,7 @@ function startTick() {
     if (!room?.round_ends_at) { $("stageTimer").classList.add("hidden"); $("playTimer").classList.add("hidden"); return; }
     const ms = new Date(room.round_ends_at).getTime() - Date.now();
     const s = Math.max(0, Math.ceil(ms / 1000));
+    Music.tick(s);
     for (const id of ["stageTimer", "playTimer"]) {
       const el = $(id);
       if (!el.classList.contains("hidden")) {
@@ -544,7 +672,7 @@ async function joinAsPlayer() {
     await loadRoom(); await loadPlayers(); await loadWords();
     render();
     // safety net: refetch room state every 3s in case a broadcast is missed
-    setInterval(async () => { if (session?.role === "player") { await loadRoom(); render(); } }, 3000);
+    setInterval(async () => { if (session?.role === "player") { await loadRoom(); await loadPlayers(); render(); } }, 3000);
   } catch {
     err.textContent = "Couldn't join. Try again.";
     err.classList.remove("hidden");
@@ -561,7 +689,7 @@ async function resumePlayer() {
   $("roomBadge").classList.remove("hidden");
   $("meName").textContent = session.name || "";
   render();
-  setInterval(async () => { if (session?.role === "player") { await loadRoom(); render(); } }, 3000);
+  setInterval(async () => { if (session?.role === "player") { await loadRoom(); await loadPlayers(); render(); } }, 3000);
 }
 
 /* ---------------- player rendering ---------------- */
@@ -572,6 +700,9 @@ function render() {
   const me = players.find((p) => p.id === session.player_id);
   if (me) $("meScore").textContent = me.score;
   if (!room) return;
+  if (room.status === "lobby") Music.setMode("lobby");
+  else if (room.status === "game_over") { Music.setMode(null); if (winStungFor !== room.id) { winStungFor = room.id; Music.sting("win"); } }
+  else Music.setMode("game");
   show("view-play");
   const c = $("playContent");
   if (room.status === "lobby") {
@@ -622,6 +753,8 @@ async function renderPlayerReveal(c) {
   await loadMyAnswer();
   const a = myAnswers[0];
   const verdict = !a ? "You didn't answer 😅" : a.is_correct ? `✅ Correct! +${a.points}` : "❌ Not quite";
+  const rk = room.id + ":" + room.current_index;
+  if (stungReveal !== rk) { stungReveal = rk; Music.sting(a && a.is_correct ? "correct" : "wrong"); }
   c.innerHTML = `<div class="reveal-box">
       <p class="q-cat">Correct answer</p>
       <p class="reveal-answer" style="font-size:1.4rem">${esc(q.correct_answer)}</p>
@@ -664,9 +797,10 @@ async function submitWord(word) {
   const me = players.find((p) => p.id === session.player_id);
   if (me) await api(`game_players?id=eq.${me.id}`, { method: "PATCH", body: JSON.stringify({ score: me.score + pts }) });
   await loadPlayers(); await loadWords();
-  ping("words");
+  ping("words"); ping("scores");
   render();
   toast(`+${pts} — nice!`, 1200);
+  Music.sting("pop");
 }
 
 function renderPlayerGameOver(c) {
@@ -698,6 +832,11 @@ function wire() {
   $("playerJoinBtn").onclick = joinAsPlayer;
   $("playerNameInput").addEventListener("keydown", (e) => { if (e.key === "Enter") joinAsPlayer(); });
   $("leaveBtn").onclick = leaveGame;
+  $("muteBtn").textContent = Music.isMuted() ? "🔇" : "🔊";
+  $("muteBtn").onclick = () => { $("muteBtn").textContent = Music.toggleMute() ? "🔇" : "🔊"; };
+  document.addEventListener("pointerdown", () => Music.unlock());
+  document.addEventListener("visibilitychange", () => { if (!document.hidden) Music.unlock(); });
+  document.addEventListener("click", (e) => { if (e.target.closest(".btn")) Music.sting("click"); });
 }
 
 async function leaveGame() {
