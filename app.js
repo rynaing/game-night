@@ -31,9 +31,15 @@ function makeQr(url) {
    (browsers block sound before that). */
 const Music = (() => {
   const LS = "gn_muted";
+  const LS_VOL = "gn_volume";
   let ctx = null, master = null;
   let muted = false;
   try { muted = localStorage.getItem(LS) === "1"; } catch {}
+  let volume = 0.32; // 0..1, default matches the old fixed loudness
+  try {
+    const v = parseInt(localStorage.getItem(LS_VOL), 10);
+    if (v >= 0 && v <= 100) volume = v / 100;
+  } catch {}
   let mode = null, step = 0, nextT = 0, timer = null, lastTickSec = -1;
 
   const mf = (m) => 440 * Math.pow(2, (m - 69) / 12); // midi -> hz
@@ -54,7 +60,7 @@ const Music = (() => {
       const AC = window.AudioContext || window.webkitAudioContext;
       ctx = new AC();
       master = ctx.createGain();
-      master.gain.value = muted ? 0 : 0.16;
+      applyGain();
       master.connect(ctx.destination);
       return true;
     } catch { return false; }
@@ -88,6 +94,7 @@ const Music = (() => {
     timer = setInterval(schedule, 40);
   }
   function stopLoop() { if (timer) { clearInterval(timer); timer = null; } }
+  function applyGain() { if (master) master.gain.value = muted ? 0 : volume * 0.5; }
 
   return {
     unlock() { if (ensure() && mode && !timer) startLoop(); },
@@ -115,9 +122,17 @@ const Music = (() => {
     toggleMute() {
       muted = !muted;
       try { localStorage.setItem(LS, muted ? "1" : "0"); } catch {}
-      if (master) master.gain.value = muted ? 0 : 0.16;
+      applyGain();
       return muted;
     },
+    setVolume(v) {
+      volume = Math.min(1, Math.max(0, v));
+      try { localStorage.setItem(LS_VOL, String(Math.round(volume * 100))); } catch {}
+      if (volume > 0 && muted) { muted = false; try { localStorage.setItem(LS, "0"); } catch {} }
+      applyGain();
+      return muted;
+    },
+    getVolume() { return volume; },
     isMuted() { return muted; },
   };
 })();
@@ -831,8 +846,15 @@ async function submitWord(word) {
   if (word.length < 3) { toast("Words must be 3+ letters."); return; }
   if (!canForm(word, room.anagram_letters)) { toast("Use only the letters shown!"); return; }
   await loadWords_dict();
-  if (!WORDS.has(word)) { toast(`"${word}" isn't in the Scrabble dictionary.`); return; }
-  if (myWords.some((w) => w.word === word)) { toast("You already played that one."); return; }
+  if (!WORDS.has(word)) { toast(`"${word}" isn't in the Scrabble dictionary.`); Music.sting("wrong"); return; }
+  await loadWords(); // fresh snapshot so duplicate detection sees everyone's words
+  const found = allWords.find((w) => w.word === word);
+  if (found) {
+    if (found.player_id === session.player_id) toast(`You already found "${word}".`);
+    else toast(`"${word}" was already found by ${found.game_players?.name || "someone"}!`);
+    Music.sting("wrong");
+    return;
+  }
   const pts = anagramPoints(word.length);
   const r = await api("game_words", {
     method: "POST",
@@ -885,8 +907,13 @@ function wire() {
   $("playerJoinBtn").onclick = joinAsPlayer;
   $("playerNameInput").addEventListener("keydown", (e) => { if (e.key === "Enter") joinAsPlayer(); });
   $("leaveBtn").onclick = leaveGame;
-  $("muteBtn").textContent = Music.isMuted() ? "🔇" : "🔊";
-  $("muteBtn").onclick = () => { $("muteBtn").textContent = Music.toggleMute() ? "🔇" : "🔊"; };
+  const syncMuteIcon = () => { $("muteBtn").textContent = Music.isMuted() ? "🔇" : "🔊"; };
+  syncMuteIcon();
+  $("muteBtn").onclick = () => { Music.toggleMute(); syncMuteIcon(); };
+  const vs = $("volSlider");
+  vs.value = Math.round(Music.getVolume() * 100);
+  vs.addEventListener("input", () => { Music.unlock(); Music.setVolume(vs.value / 100); syncMuteIcon(); });
+  vs.addEventListener("change", () => Music.sting("click"));
   document.addEventListener("pointerdown", () => Music.unlock());
   document.addEventListener("visibilitychange", () => { if (!document.hidden) Music.unlock(); });
   document.addEventListener("click", (e) => { if (e.target.closest(".btn")) Music.sting("click"); });
