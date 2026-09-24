@@ -1,0 +1,138 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+<title>Game Night — trivia & anagrams</title>
+<link rel="stylesheet" href="styles.css" />
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+</head>
+<body>
+<header class="topbar">
+  <span class="logo">🎮 Game Night</span>
+  <span id="roomBadge" class="room-badge hidden"></span>
+</header>
+
+<main id="app">
+
+  <!-- ============ HOME ============ -->
+  <section id="view-home" class="view">
+    <h1 class="hero">Game Night</h1>
+    <p class="sub">Jackbox-style party games.<br/>Phones in. TV on. Go.</p>
+    <div class="home-grid">
+      <button id="hostBtn" class="big-btn">📺 Host a game</button>
+      <div class="join-card">
+        <label>Join a game</label>
+        <div class="join-row">
+          <input id="joinCodeInput" maxlength="4" placeholder="CODE" autocomplete="off" autocapitalize="characters" spellcheck="false" />
+          <button id="joinGoBtn" class="btn">Join</button>
+        </div>
+      </div>
+    </div>
+    <p class="hint">Players: open the join link or scan the QR on the host screen.</p>
+  </section>
+
+  <!-- ============ HOST SETUP ============ -->
+  <section id="view-setup" class="view hidden">
+    <h2>Host a game</h2>
+    <div class="game-pick">
+      <button class="pick-card selected" data-game="trivia">
+        <span class="pick-emoji">🧠</span><span>Trivia</span>
+        <small>Questions on the TV,<br/>buzz in on your phone</small>
+      </button>
+      <button class="pick-card" data-game="anagram">
+        <span class="pick-emoji">🔤</span><span>Anagrams</span>
+        <small>6 letters, 60 seconds,<br/>most words wins</small>
+      </button>
+    </div>
+
+    <div id="triviaSettings" class="settings">
+      <label>Category
+        <select id="selCategory"><option value="">All categories</option></select>
+      </label>
+      <label>Difficulty
+        <select id="selDifficulty">
+          <option value="">Mixed</option>
+          <option value="easy">Easy</option>
+          <option value="medium">Medium</option>
+          <option value="hard">Hard</option>
+        </select>
+      </label>
+      <label>Questions
+        <select id="selCount">
+          <option value="5">5</option>
+          <option value="10" selected>10</option>
+          <option value="15">15</option>
+        </select>
+      </label>
+      <p class="pack-note">Question pack: <strong>Open Trivia DB</strong> · family packs land in 2.0</p>
+    </div>
+
+    <div id="anagramSettings" class="settings hidden">
+      <label>Round length
+        <select id="selSeconds">
+          <option value="45">45 seconds</option>
+          <option value="60" selected>60 seconds</option>
+          <option value="90">90 seconds</option>
+        </select>
+      </label>
+      <p class="pack-note">Words checked against the Scrabble dictionary.</p>
+    </div>
+
+    <div class="row">
+      <button id="backHomeBtn" class="btn ghost">← Back</button>
+      <button id="createRoomBtn" class="btn primary">Create room →</button>
+    </div>
+    <p id="setupError" class="error hidden"></p>
+  </section>
+
+  <!-- ============ HOST LOBBY ============ -->
+  <section id="view-lobby" class="view hidden">
+    <p class="lobby-label">Room code</p>
+    <div id="lobbyCode" class="room-code">····</div>
+    <img id="lobbyQr" class="qr" alt="Scan to join" />
+    <p class="hint" id="lobbyUrl"></p>
+    <h3>Players (<span id="lobbyCount">0</span>)</h3>
+    <ul id="lobbyPlayers" class="player-list"></ul>
+    <div class="row">
+      <button id="lobbyBackBtn" class="btn ghost">← Back</button>
+      <button id="startGameBtn" class="btn primary big">Start game →</button>
+    </div>
+    <p class="attrib">Trivia questions by <a href="https://opentdb.com" target="_blank" rel="noopener">Open Trivia DB</a> (CC BY-SA 4.0)</p>
+  </section>
+
+  <!-- ============ STAGE (host game screen) ============ -->
+  <section id="view-stage" class="view hidden">
+    <div id="stageTimer" class="timer hidden"></div>
+    <div id="stageContent"></div>
+    <div class="row center">
+      <button id="stageNextBtn" class="btn primary big hidden">Next →</button>
+      <button id="stageEndBtn" class="btn ghost hidden">End game</button>
+    </div>
+  </section>
+
+  <!-- ============ PLAYER: enter name ============ -->
+  <section id="view-joinname" class="view hidden">
+    <h2>Join game</h2>
+    <p class="hint">Room <strong id="joinRoomCode"></strong></p>
+    <label>Your name
+      <input id="playerNameInput" maxlength="16" placeholder="e.g. Alex" autocomplete="off" />
+    </label>
+    <button id="playerJoinBtn" class="btn primary big">Join 🎉</button>
+    <p id="joinError" class="error hidden"></p>
+  </section>
+
+  <!-- ============ PLAYER: game screen ============ -->
+  <section id="view-play" class="view hidden">
+    <div id="playTimer" class="timer hidden"></div>
+    <div id="playContent"></div>
+    <p class="me-line">Playing as <strong id="meName"></strong> · <span id="meScore">0</span> pts</p>
+  </section>
+
+</main>
+
+<div id="toast" class="toast hidden"></div>
+
+<script src="app.js"></script>
+</body>
+</html>
