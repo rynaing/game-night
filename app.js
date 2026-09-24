@@ -11,7 +11,7 @@ const sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
 
-const BUILD = "1790224856"; // deploy.sh replaces this with a timestamp
+const BUILD = "1790225266"; // deploy.sh replaces this with a timestamp
 
 // Stale-tab nudge: each deploy ships a fresh app.js?v= token, but a tab opened
 // before the deploy keeps running old code. Check for a newer build once a
@@ -81,10 +81,10 @@ const Music = (() => {
     home: { bpm: 92, bassType: "triangle", bassVol: 0.4, leadType: "triangle", leadVol: 0.3,
       bass: [48,0,0,0,0,0,0,0,55,0,0,0,0,0,0,0, 45,0,0,0,0,0,0,0,52,0,0,0,0,0,0,0, 41,0,0,0,0,0,0,0,48,0,0,0,0,0,0,0, 43,0,0,0,0,0,0,0,50,0,0,0,0,0,0,0],
       lead: [72,0,0,76,0,0,79,0,0,0,84,0,79,0,0,0, 81,0,0,79,0,0,76,0,0,0,74,0,76,0,0,0, 77,0,0,81,0,0,84,0,0,0,81,0,79,0,0,0, 83,0,0,79,0,0,77,0,0,0,79,0,0,0,0,0] },
-    lobby: { bpm: 120,
+    lobby: { bpm: 120, bassType: "triangle", bassVol: 0.32, leadType: "triangle", leadVol: 0.36,
       bass: [48,0,48,0,55,0,48,0,48,0,48,0,55,0,53,0, 53,0,53,0,60,0,53,0,53,0,53,0,60,0,57,0, 55,0,55,0,62,0,55,0,55,0,55,0,62,0,59,0, 48,0,48,0,55,0,48,0,53,0,55,0,48,0,0,0],
       lead: [72,0,76,0,79,0,76,0,81,0,79,0,76,0,72,0, 77,0,81,0,84,0,81,0,79,0,81,0,77,0,74,0, 74,0,79,0,83,0,79,0,81,0,83,0,86,0,83,0, 84,0,81,0,79,0,76,0,74,0,72,0,74,0,0,0] },
-    game_gameshow: { bpm: 132,
+    game_gameshow: { bpm: 132, bassType: "triangle", bassVol: 0.34, leadType: "triangle", leadVol: 0.4,
       bass: [45,0,45,0,45,0,52,0,45,0,45,0,45,0,52,0, 41,0,41,0,41,0,48,0,41,0,41,0,41,0,48,0, 48,0,48,0,48,0,55,0,48,0,48,0,48,0,55,0, 43,0,43,0,43,0,50,0,43,0,43,0,50,0,43,0],
       lead: [81,0,84,81,0,79,0,81,84,0,81,0,79,0,76,0, 77,0,81,77,0,84,0,81,77,0,74,0,77,0,0,0, 79,0,84,79,0,76,0,79,84,0,86,0,84,0,79,0, 83,0,79,83,0,86,0,83,79,0,77,0,79,0,74,0] },
     game_kawaii: { bpm: 140, bassType: "triangle", bassVol: 0.3, leadType: "triangle", leadVol: 0.35,
