@@ -416,6 +416,13 @@ const LETTER_BAG = "EEEEEEEEEEEEAAAAAAAAAIIIIIIIIIOOOOOOOONNNNNNRRRRRRTTTTTTLLLL
 const ANAGRAM_TARGET = 1500; // default par score for each anagram round
 const anagramTarget = () => (room && room.settings && room.settings.target) || ANAGRAM_TARGET;
 const anagramMinLen = () => (room && room.settings && room.settings.min_len) || 3;
+// "off" | "full" | "half" — legacy boolean true means "full"
+const repeatMode = () => {
+  const v = room && room.settings && room.settings.allow_repeats;
+  if (v === true || v === "full") return "full";
+  if (v === "half") return "half";
+  return "off";
+};
 let WORDS_BY_LEN = {}; // cache of dictionary words by length
 function genLetters(n) {
   // Pick a real n-letter word from the dictionary and scramble it, so there is
@@ -803,7 +810,8 @@ function prefillSetupFromRoom() {
     $("selLetters").value = String(s.letters || 6);
     $("selMinLen").value = String(s.min_len || 3);
     $("selTarget").value = String(s.target || 1500);
-    $("chkAllowRepeats").checked = !!s.allow_repeats;
+    const ar = s.allow_repeats;
+    $("selRepeats").value = (ar === true || ar === "full") ? "full" : ar === "half" ? "half" : "off";
   }
 }
 function restoreSetupLabels() {
@@ -833,7 +841,7 @@ function cancelRematchEdit() {
 function gatherSettings() {
   return pickedGame === "trivia"
     ? { categories: [...selectedCats], difficulty: $("selDifficulty").value || null, count: parseInt($("selCount").value, 10), auto_advance: $("chkAutoAdvance").checked }
-    : { seconds: parseInt($("selSeconds").value, 10), letters: parseInt($("selLetters").value, 10), min_len: parseInt($("selMinLen").value, 10), target: parseInt($("selTarget").value, 10), allow_repeats: $("chkAllowRepeats").checked };
+    : { seconds: parseInt($("selSeconds").value, 10), letters: parseInt($("selLetters").value, 10), min_len: parseInt($("selMinLen").value, 10), target: parseInt($("selTarget").value, 10), allow_repeats: $("selRepeats").value };
 }
 async function startRematch() {
   const errBox = $("setupError");
@@ -1112,17 +1120,18 @@ async function submitWord(word) {
   await loadWords_dict();
   if (!WORDS.has(word)) { toast(`"${word}" isn't in the Scrabble dictionary.`); Music.sting("wrong"); return; }
   await loadWords(); // fresh snapshot so duplicate detection sees everyone's words
-  const allowRepeats = (room.settings || {}).allow_repeats;
+  const mode = repeatMode();
   const found = allWords.find((w) => w.word === word);
   if (found && found.player_id === session.player_id) {
     toast(`You already found "${word}".`); Music.sting("wrong"); return;
   }
-  if (found && !allowRepeats) {
+  if (found && mode === "off") {
     toast(`"${word}" was already found by ${found.game_players?.name || "someone"}!`);
     Music.sting("wrong");
     return;
   }
-  const pts = anagramPoints(word.length);
+  let pts = anagramPoints(word.length);
+  if (found && mode === "half") pts = Math.floor(pts / 2); // repeat word: half points
   const r = await api("game_words", {
     method: "POST",
     headers: { Prefer: "return=representation" },
@@ -1144,7 +1153,7 @@ async function submitWord(word) {
   const me2 = players.find((p) => p.id === session.player_id);
   if (me2) $("meScore").textContent = me2.score;
   if (crossed) { toast(`🎯 ${anagramTarget().toLocaleString()} target smashed!`, 2000); Music.sting("win"); }
-  else { toast(`+${pts} — nice!`, 1200); Music.sting("pop"); }
+  else { toast(found ? `+${pts} (repeat!) — nice!` : `+${pts} — nice!`, 1200); Music.sting("pop"); }
 }
 
 function renderPlayerGameOver(c) {
