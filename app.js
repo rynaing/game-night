@@ -791,6 +791,7 @@ function prefillSetupFromRoom() {
     $("selLetters").value = String(s.letters || 6);
     $("selMinLen").value = String(s.min_len || 3);
     $("selTarget").value = String(s.target || 1500);
+    $("chkAllowRepeats").checked = !!s.allow_repeats;
   }
 }
 function restoreSetupLabels() {
@@ -820,7 +821,7 @@ function cancelRematchEdit() {
 function gatherSettings() {
   return pickedGame === "trivia"
     ? { categories: [...selectedCats], difficulty: $("selDifficulty").value || null, count: parseInt($("selCount").value, 10), auto_advance: $("chkAutoAdvance").checked }
-    : { seconds: parseInt($("selSeconds").value, 10), letters: parseInt($("selLetters").value, 10), min_len: parseInt($("selMinLen").value, 10), target: parseInt($("selTarget").value, 10) };
+    : { seconds: parseInt($("selSeconds").value, 10), letters: parseInt($("selLetters").value, 10), min_len: parseInt($("selMinLen").value, 10), target: parseInt($("selTarget").value, 10), allow_repeats: $("chkAllowRepeats").checked };
 }
 async function startRematch() {
   const errBox = $("setupError");
@@ -1063,6 +1064,10 @@ function renderPlayerAnagram(c) {
     input = $("wordInput");
     const submit = () => submitWord(input.value.trim().toUpperCase());
     $("wordGo").onclick = submit;
+    // Tapping a button blurs the input on iOS and drops the keyboard.
+    // Prevent the focus change so the keyboard stays up while submitting words.
+    $("wordGo").addEventListener("mousedown", (e) => e.preventDefault());
+    $("shuffleBtn").addEventListener("mousedown", (e) => e.preventDefault());
     $("shuffleBtn").onclick = () => {
       const cont = c.querySelector(".letters");
       const tiles = [...cont.children];
@@ -1092,10 +1097,13 @@ async function submitWord(word) {
   await loadWords_dict();
   if (!WORDS.has(word)) { toast(`"${word}" isn't in the Scrabble dictionary.`); Music.sting("wrong"); return; }
   await loadWords(); // fresh snapshot so duplicate detection sees everyone's words
+  const allowRepeats = (room.settings || {}).allow_repeats;
   const found = allWords.find((w) => w.word === word);
-  if (found) {
-    if (found.player_id === session.player_id) toast(`You already found "${word}".`);
-    else toast(`"${word}" was already found by ${found.game_players?.name || "someone"}!`);
+  if (found && found.player_id === session.player_id) {
+    toast(`You already found "${word}".`); Music.sting("wrong"); return;
+  }
+  if (found && !allowRepeats) {
+    toast(`"${word}" was already found by ${found.game_players?.name || "someone"}!`);
     Music.sting("wrong");
     return;
   }
