@@ -1065,43 +1065,61 @@ async function renderPlayerReveal(c) {
     </div>`;
 }
 
+let clearAnagramBuilt = null; // reset the tap-to-spell word (set when the round layout builds)
+
 function renderPlayerAnagram(c) {
   $("playTimer").classList.remove("hidden");
-  // Build the input layout once per round. Later renders only refresh the word
-  // chips — rebuilding the input would drop the iOS keyboard and wipe half-typed words.
+  // Build the layout once per round. Later renders only refresh the word
+  // chips — rebuilding would wipe the in-progress tapped word.
   const roundKey = room.id + "|" + (room.round_ends_at || "");
-  let input = $("wordInput");
-  if (!input || c.dataset.anagramRound !== roundKey) {
-    const tiles = room.anagram_letters.split("").map((ch) => `<div class="tile">${ch}</div>`).join("");
+  if (!c.dataset.anagramRound || c.dataset.anagramRound !== roundKey) {
+    const tiles = room.anagram_letters.split("").map((ch) => `<button type="button" class="tile" data-ch="${ch}">${ch}</button>`).join("");
     c.innerHTML = `
       <p class="q-cat">Make words · ${anagramMinLen()}+ letters · 🎯 ${anagramTarget().toLocaleString()} target</p>
       <div class="letters">${tiles}</div>
+      <div class="build-row">
+        <div class="build-word" id="buildWord"></div>
+        <button id="backspaceBtn" class="btn" aria-label="Delete last letter">⌫</button>
+      </div>
       <div class="word-row">
-        <input id="wordInput" maxlength="6" placeholder="TYPE A WORD" autocomplete="off" autocorrect="off" autocapitalize="characters" spellcheck="false" />
         <button id="shuffleBtn" class="btn" title="Shuffle letters">🔀</button>
+        <button id="clearWordBtn" class="btn">Clear</button>
         <button id="wordGo" class="btn primary">✓</button>
       </div>
       <div class="word-list" id="anagramChips"></div>`;
     c.dataset.anagramRound = roundKey;
-    input = $("wordInput");
-    const submit = () => submitWord(input.value.trim().toUpperCase());
-    $("wordGo").onclick = submit;
-    // Tapping a button blurs the input on iOS and drops the keyboard.
-    // Prevent the focus change so the keyboard stays up while submitting words.
-    $("wordGo").addEventListener("mousedown", (e) => e.preventDefault());
-    $("shuffleBtn").addEventListener("mousedown", (e) => e.preventDefault());
+    const tileBtns = [...c.querySelectorAll(".tile")];
+    let built = []; // indexes into tileBtns, in tap order
+    const renderBuilt = () => {
+      const bw = $("buildWord");
+      bw.innerHTML = built.length
+        ? built.map((i) => `<span class="btile">${esc(tileBtns[i].dataset.ch)}</span>`).join("")
+        : `<span class="build-hint">TAP THE LETTERS</span>`;
+      tileBtns.forEach((b, i) => b.classList.toggle("used", built.includes(i)));
+      $("wordGo").disabled = built.length < anagramMinLen();
+    };
+    // Tap a tile to add it, tap again to remove it.
+    tileBtns.forEach((b, i) => b.onclick = () => {
+      const at = built.indexOf(i);
+      if (at >= 0) built.splice(at, 1); else built.push(i);
+      renderBuilt();
+      Music.sting("click");
+    });
+    $("backspaceBtn").onclick = () => { built.pop(); renderBuilt(); };
+    $("clearWordBtn").onclick = () => { built = []; renderBuilt(); };
+    clearAnagramBuilt = () => { built = []; renderBuilt(); };
+    $("wordGo").onclick = () => submitWord(built.map((i) => tileBtns[i].dataset.ch).join(""));
     $("shuffleBtn").onclick = () => {
       const cont = c.querySelector(".letters");
-      const tiles = [...cont.children];
-      for (let i = tiles.length - 1; i > 0; i--) {
+      const els = [...cont.children];
+      for (let i = els.length - 1; i > 0; i--) {
         const j = Math.floor(Math.random() * (i + 1));
-        [tiles[i], tiles[j]] = [tiles[j], tiles[i]];
+        [els[i], els[j]] = [els[j], els[i]];
       }
-      tiles.forEach((t) => cont.appendChild(t));
+      els.forEach((t) => cont.appendChild(t));
       Music.sting("click");
     };
-    input.addEventListener("keydown", (e) => { if (e.key === "Enter") submit(); });
-    input.focus();
+    renderBuilt();
   }
   refreshChips();
 }
@@ -1150,8 +1168,7 @@ async function submitWord(word) {
   await loadPlayers(); await loadWords();
   ping("words"); ping("scores");
   refreshChips();
-  const input = $("wordInput");
-  if (input) { input.value = ""; input.focus(); }
+  if (clearAnagramBuilt) clearAnagramBuilt(); // reset the tap-to-spell word
   const me2 = players.find((p) => p.id === session.player_id);
   if (me2) $("meScore").textContent = me2.score;
   if (crossed) { toast(`🎯 ${anagramTarget().toLocaleString()} target smashed!`, 2000); Music.sting("win"); }
