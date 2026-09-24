@@ -324,6 +324,7 @@ async function loadCategories() {
       const b = document.createElement("button");
       b.type = "button";
       b.className = "chip" + (selectedCats.includes(c.id) ? " on" : "");
+      b.dataset.cid = c.id;
       b.textContent = c.name.replace(/^Entertainment: |^Science: /, "");
       b.onclick = () => toggleCat(c.id, b);
       box.appendChild(b);
@@ -450,9 +451,7 @@ function initSetup() {
 async function createRoom() {
   const errBox = $("setupError");
   errBox.classList.add("hidden");
-  const settings = pickedGame === "trivia"
-    ? { categories: [...selectedCats], difficulty: $("selDifficulty").value || null, count: parseInt($("selCount").value, 10) }
-    : { seconds: parseInt($("selSeconds").value, 10) };
+  const settings = gatherSettings();
   $("createRoomBtn").disabled = true;
   try {
     const [res] = await rpc("create_game_room", { gtype: pickedGame, p_settings: settings, p_pack_id: ACTIVE_PACK });
@@ -496,6 +495,7 @@ async function startGame() {
   stopLobbyPoll();
   Music.setMode("game");
   holdWake();
+  winStungFor = null;
   $("startGameBtn").disabled = true;
   try {
     if (room.game_type === "trivia") await startTrivia();
@@ -598,7 +598,10 @@ async function startAnagram() {
 function renderStage() {
   show("view-stage");
   $("stageNextBtn").classList.add("hidden");
-  $("stageEndBtn").classList.remove("hidden");
+  const eb = $("stageEndBtn");
+  eb.classList.remove("hidden");
+  eb.textContent = "End game";
+  eb.onclick = async () => { await updateRoom({ status: "game_over" }); renderStage(); };
   const c = $("stageContent");
   if (room.status === "question") renderHostQuestion(c);
   else if (room.status === "reveal") renderHostReveal(c);
@@ -637,7 +640,7 @@ function renderHostReveal(c) {
   nb.textContent = last ? "See results →" : "Next question →";
   nb.onclick = () => { clearInterval(revealTimer); revealTimer = null; nextTrivia(); };
   // Auto-advance after a countdown (one countdown per question; manual Next cancels it).
-  const rk = room.id + ":" + room.current_index;
+  const rk = room.id + ":" + (room.round_ends_at || "") + ":" + room.current_index;
   if (revealFor !== rk) {
     revealFor = rk;
     clearInterval(revealTimer);
@@ -686,9 +689,12 @@ function renderHostGameOver(c) {
   $("stageTimer").classList.add("hidden");
   const nb = $("stageNextBtn");
   nb.classList.remove("hidden");
-  nb.textContent = "← Back to lobby";
-  nb.onclick = backToLobby;
-  $("stageEndBtn").classList.add("hidden");
+  nb.textContent = "🔁 Play again";
+  nb.onclick = openRematchSettings;
+  const eb = $("stageEndBtn");
+  eb.classList.remove("hidden");
+  eb.textContent = "← Back to lobby";
+  eb.onclick = backToLobby;
 }
 
 async function backToLobby() {
@@ -698,6 +704,60 @@ async function backToLobby() {
   await updateRoom({ status: "lobby", questions: [], current_index: 0, anagram_letters: null, round_ends_at: null });
   await loadPlayers();
   renderLobby();
+}
+
+let editingRoom = false; // setup view is editing settings for an existing room (rematch)
+function openRematchSettings() {
+  editingRoom = true;
+  const s = room.settings || {};
+  pickedGame = room.game_type || "trivia";
+  document.querySelectorAll(".pick-card").forEach((x) => x.classList.toggle("selected", x.dataset.game === pickedGame));
+  $("triviaSettings").classList.toggle("hidden", pickedGame !== "trivia");
+  $("anagramSettings").classList.toggle("hidden", pickedGame !== "anagram");
+  if (pickedGame === "trivia") {
+    selectedCats = [...(s.categories || [])];
+    if (!otdbCategories.length) loadCategories();
+    document.querySelectorAll("#catChips .chip").forEach((chip) =>
+      chip.classList.toggle("on", selectedCats.includes(Number(chip.dataset.cid))));
+    $("selDifficulty").value = s.difficulty || "";
+    $("selCount").value = String(s.count || 10);
+  } else {
+    $("selSeconds").value = String(s.seconds || 60);
+  }
+  $("setupTitle").textContent = "Rematch settings";
+  $("createRoomBtn").textContent = "Start game →";
+  show("view-setup");
+}
+function cancelRematchEdit() {
+  editingRoom = false;
+  $("setupTitle").textContent = "Host a game";
+  $("createRoomBtn").textContent = "Create room →";
+  renderStage();
+}
+function gatherSettings() {
+  return pickedGame === "trivia"
+    ? { categories: [...selectedCats], difficulty: $("selDifficulty").value || null, count: parseInt($("selCount").value, 10) }
+    : { seconds: parseInt($("selSeconds").value, 10) };
+}
+async function startRematch() {
+  const errBox = $("setupError");
+  errBox.classList.add("hidden");
+  $("createRoomBtn").disabled = true;
+  try {
+    await api(`game_answers?room_id=eq.${session.room_id}`, { method: "DELETE" });
+    await api(`game_words?room_id=eq.${session.room_id}`, { method: "DELETE" });
+    for (const p of players) await api(`game_players?id=eq.${p.id}`, { method: "PATCH", body: JSON.stringify({ score: 0 }) });
+    await loadPlayers();
+    await updateRoom({ game_type: pickedGame, settings: gatherSettings(), questions: [], current_index: 0, anagram_letters: null, round_ends_at: null });
+    editingRoom = false;
+    $("setupTitle").textContent = "Host a game";
+    $("createRoomBtn").textContent = "Create room →";
+    await startGame();
+  } catch (e) {
+    errBox.textContent = "Couldn't start: " + (e && e.message ? e.message : String(e));
+    errBox.classList.remove("hidden");
+  }
+  $("createRoomBtn").disabled = false;
 }
 
 /* host clock: drives question/anagram timers */
@@ -826,9 +886,9 @@ async function renderPlayerQuestion(c) {
   const q = room.questions[room.current_index];
   await loadMyAnswer();
   const answered = myAnswers[0];
-  if (shuffledFor !== room.current_index) {
+  if (shuffledFor !== (room.round_ends_at || "") + "|" + room.current_index) {
     shuffledAnswers = shuffle([q.correct_answer, ...q.incorrect_answers]);
-    shuffledFor = room.current_index;
+    shuffledFor = (room.round_ends_at || "") + "|" + room.current_index;
   }
   $("playTimer").classList.remove("hidden");
   if (answered) {
@@ -858,7 +918,7 @@ async function renderPlayerReveal(c) {
   await loadMyAnswer();
   const a = myAnswers[0];
   const verdict = !a ? "You didn't answer 😅" : a.is_correct ? `✅ Correct! +${a.points}` : "❌ Not quite";
-  const rk = room.id + ":" + room.current_index;
+  const rk = room.id + ":" + (room.round_ends_at || "") + ":" + room.current_index;
   if (stungReveal !== rk) { stungReveal = rk; Music.sting(a && a.is_correct ? "correct" : "wrong"); }
   c.innerHTML = `<div class="reveal-box">
       <p class="q-cat">Correct answer</p>
@@ -954,7 +1014,8 @@ function renderPlayerGameOver(c) {
   c.innerHTML = `
     <p class="q-cat">Game over</p>
     <p class="winner" style="font-size:2rem">${rank === 1 ? "🏆 You won!" : `You placed #${rank}`}</p>
-    <table class="score-table">${rows}</table>`;
+    <table class="score-table">${rows}</table>
+    <p class="hint" style="text-align:center">Waiting for the host to start the next game… 🎮</p>`;
 }
 
 /* ============================================================
@@ -964,8 +1025,8 @@ function wire() {
   $("hostBtn").onclick = initSetup;
   $("boardBtn").onclick = showBoard;
   $("boardBackBtn").onclick = () => show("view-home");
-  $("backHomeBtn").onclick = () => show("view-home");
-  $("createRoomBtn").onclick = createRoom;
+  $("backHomeBtn").onclick = () => { if (editingRoom) cancelRematchEdit(); else show("view-home"); };
+  $("createRoomBtn").onclick = () => { if (editingRoom) startRematch(); else createRoom(); };
   $("lobbyBackBtn").onclick = () => { stopLobbyPoll(); show("view-home"); };
   $("startGameBtn").onclick = startGame;
   $("stageEndBtn").onclick = async () => { await updateRoom({ status: "game_over" }); renderStage(); };
