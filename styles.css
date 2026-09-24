@@ -151,6 +151,12 @@ input:focus, select:focus { outline: 2px solid var(--accent); border-color: var(
   padding: 0.8rem 1.4rem; border-radius: 12px; font-weight: 600; z-index: 50;
   max-width: 90vw; text-align: center;
 }
+.reveal-count { text-align: center; color: var(--muted); font-weight: 700; margin-top: 0.8rem; }
+.settings-label { font-weight: 700; margin: 0.6rem 0 0.2rem; }
+.hint-inline { font-weight: 400; color: var(--muted); font-size: 0.82rem; }
+.chip-row { display: flex; flex-wrap: wrap; gap: 0.4rem; margin: 0.3rem 0 0.9rem; }
+.chip { padding: 0.35rem 0.75rem; border-radius: 999px; border: 1px solid var(--border, #3a3654); background: transparent; color: var(--text); font-size: 0.85rem; cursor: pointer; }
+.chip.on { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 700; }
 .me-line { text-align: center; color: var(--muted); margin-top: 2rem; font-size: 0.9rem; }
 h2 { font-size: 1.8rem; }
 h3 { margin-top: 1.6rem; }
