@@ -114,7 +114,7 @@ input:focus, select:focus { outline: 2px solid var(--accent); border-color: var(
 .q-meta { text-align: center; color: var(--muted); }
 .answer-grid { display: grid; gap: 0.7rem; max-width: 560px; margin: 0 auto; }
 .answer-btn {
-  font-size: 1.15rem; font-weight: 600; text-align: left; padding: 1rem 1.2rem;
+  font-size: calc(1.3rem * var(--ans-scale, 1)); font-weight: 600; text-align: left; padding: 1.15rem 1.3rem;
   background: var(--card); color: var(--text); border: 2px solid #3b3270; border-radius: var(--radius); cursor: pointer;
 }
 .answer-btn.picked { border-color: var(--accent2); background: #1c2a4a; }
@@ -130,7 +130,9 @@ input:focus, select:focus { outline: 2px solid var(--accent); border-color: var(
 .ans-pick { font-size: 0.85rem; color: var(--muted); font-weight: 400; margin-top: 0.15rem; }
 .my-answer { text-align: center; background: var(--card); border-radius: 12px;
   padding: 0.9rem 1rem; margin: 1rem auto; max-width: 420px; color: var(--muted); }
-.my-answer strong { color: var(--text); font-size: 1.15rem; }
+.my-answer strong { color: var(--text); font-size: calc(1.15rem * var(--ans-scale, 1)); }
+.scale-ctl { display: flex; align-items: center; justify-content: center; gap: 0.8rem; margin-top: 1.2rem; }
+.scale-ctl .icon-btn { font-weight: 800; font-size: 1rem; min-width: 2.6rem; }
 .rank-1 td:first-child::before { content: "🥇 "; }
 .rank-2 td:first-child::before { content: "🥈 "; }
 .rank-3 td:first-child::before { content: "🥉 "; }
