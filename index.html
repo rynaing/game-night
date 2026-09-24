@@ -13,7 +13,10 @@
 <header class="topbar">
   <span class="logo">🎮 Game Night</span>
   <span id="roomBadge" class="room-badge hidden"></span>
-  <button id="muteBtn" class="icon-btn" aria-label="Toggle sound">🔊</button>
+  <div class="sound-ctl">
+    <input id="volSlider" type="range" min="0" max="100" step="1" value="32" aria-label="Music volume" />
+    <button id="muteBtn" class="icon-btn" aria-label="Toggle sound">🔊</button>
+  </div>
 </header>
 
 <main id="app">
