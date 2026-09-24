@@ -11,7 +11,7 @@ const sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
 
-const BUILD = "1790223589"; // deploy.sh replaces this with a timestamp
+const BUILD = "1790223716"; // deploy.sh replaces this with a timestamp
 
 // Stale-tab nudge: each deploy ships a fresh app.js?v= token, but a tab opened
 // before the deploy keeps running old code. Check for a newer build once a
@@ -433,7 +433,7 @@ async function fetchCat(category, difficulty, amount) {
 /* ---------------- anagram helpers ---------------- */
 async function loadWords_dict() {
   if (WORDS) return WORDS;
-  const txt = await (await fetch("words.txt")).text();
+  const txt = await (await fetch(`words.txt?v=${BUILD}`)).text(); // cache-busted: dict grew to 7-8 letters
   WORDS = new Set(txt.split(/\s+/).filter(Boolean));
   return WORDS;
 }
@@ -471,7 +471,8 @@ function genLetters(n) {
   // Pick a real n-letter word from the dictionary and scramble it, so there is
   // always at least one n-letter word hiding in the tiles.
   n = n || 6;
-  if (!WORDS_BY_LEN[n]) WORDS_BY_LEN[n] = [...WORDS].filter((w) => w.length === n);
+  // Rebuild if empty: a stale/partial dictionary must never poison the cache.
+  if (!WORDS_BY_LEN[n] || !WORDS_BY_LEN[n].length) WORDS_BY_LEN[n] = [...WORDS].filter((w) => w.length === n);
   const pool = WORDS_BY_LEN[n].length ? WORDS_BY_LEN[n] : [...WORDS].filter((w) => w.length === 6);
   const word = pool[Math.floor(Math.random() * pool.length)];
   let arr = word.split(""), s;
