@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
-<title>Game Night — trivia & anagrams</title>
+<title>Game Night — party games for the big screen</title>
 <meta name="robots" content="noindex, nofollow" />
 <link rel="stylesheet" href="styles.css" />
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
@@ -129,6 +129,10 @@ html.gated body > :not(#gate){display:none !important}
         <span class="pick-emoji">🔤</span><span>Anagrams</span>
         <small>most words wins</small>
       </button>
+      <button class="pick-card" data-game="mostlikely">
+        <span class="pick-emoji">🗳️</span><span>Most Likely To</span>
+        <small>vote on each other</small>
+      </button>
     </div>
 
     <div id="triviaSettings" class="settings">
@@ -184,6 +188,17 @@ html.gated body > :not(#gate){display:none !important}
         </select>
       </label>
       <p class="pack-note">Words checked against the Scrabble dictionary.</p>
+    </div>
+
+    <div id="mltSettings" class="settings hidden">
+      <label>Rounds
+        <select id="selRounds">
+          <option value="5">5</option>
+          <option value="10" selected>10</option>
+          <option value="15">15</option>
+        </select>
+      </label>
+      <p class="pack-note">Everyone votes for who the prompt describes best. Most votes wins the round — ties all score.</p>
     </div>
 
     <div class="row">
@@ -248,6 +263,6 @@ html.gated body > :not(#gate){display:none !important}
 
 <div id="toast" class="toast hidden"></div>
 
-<script src="app.js?v=1790255054"></script>
+<script src="app.js?v=1790256742"></script>
 </body>
 </html>
