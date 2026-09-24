@@ -11,7 +11,7 @@ const sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
 
-const BUILD = "1790222810"; // deploy.sh replaces this with a timestamp
+const BUILD = "1790223006"; // deploy.sh replaces this with a timestamp
 
 // Stale-tab nudge: each deploy ships a fresh app.js?v= token, but a tab opened
 // before the deploy keeps running old code. Check for a newer build once a
@@ -161,10 +161,11 @@ const Music = (() => {
       if (!ctx) return;
       if (mode && songFor(mode)) startLoop(); else stopLoop();
     },
-    sting(name) {
+    sting(name, opt) {
       if (!ensure()) return;
       const t = ctx.currentTime + 0.01;
       if (name === "click") tone(880, t, 0.06, "square", 0.3);
+      else if (name === "tile") { const f = 620 + ((opt | 0) % 8) * 80; tone(f, t, 0.09, "triangle", 0.55, f * 1.6); }
       else if (name === "pop") tone(660, t, 0.09, "square", 0.4, 990);
       else if (name === "join") { tone(523, t, 0.09, "square", 0.4); tone(784, t + 0.09, 0.12, "square", 0.4); }
       else if (name === "tick") tone(1250, t, 0.045, "square", 0.2);
@@ -1115,7 +1116,7 @@ function renderPlayerAnagram(c) {
     const renderBuilt = () => {
       const bw = $("buildWord");
       bw.innerHTML = built.length
-        ? built.map((i) => `<span class="btile">${esc(tileBtns[i].dataset.ch)}</span>`).join("")
+        ? built.map((i, k) => `<span class="btile${k === built.length - 1 ? " fresh" : ""}">${esc(tileBtns[i].dataset.ch)}</span>`).join("")
         : `<span class="build-hint">TAP THE LETTERS</span>`;
       tileBtns.forEach((b, i) => b.classList.toggle("used", built.includes(i)));
       $("wordGo").disabled = built.length < anagramMinLen();
@@ -1123,9 +1124,18 @@ function renderPlayerAnagram(c) {
     // Tap a tile to add it, tap again to remove it.
     tileBtns.forEach((b, i) => b.onclick = () => {
       const at = built.indexOf(i);
-      if (at >= 0) built.splice(at, 1); else built.push(i);
+      if (at >= 0) {
+        built.splice(at, 1);
+        Music.sting("click");
+      } else {
+        built.push(i);
+        // little jump + rising pop so each tap feels tactile
+        try { b.animate(
+          [{ transform: "scale(1)" }, { transform: "scale(1.25) translateY(-8px)", offset: 0.4 }, { transform: "scale(0.92)" }],
+          { duration: 200, easing: "ease-out" }); } catch {}
+        Music.sting("tile", built.length);
+      }
       renderBuilt();
-      Music.sting("click");
     });
     $("backspaceBtn").onclick = () => { built.pop(); renderBuilt(); };
     $("clearWordBtn").onclick = () => { built = []; renderBuilt(); };
@@ -1157,19 +1167,21 @@ function refreshChips() {
 }
 
 async function submitWord(word) {
-  if (word.length < anagramMinLen()) { toast(`Words must be ${anagramMinLen()}+ letters.`); return; }
-  if (!canForm(word, room.anagram_letters)) { toast("Use only the letters shown!"); return; }
+  const clearBuilt = () => { if (clearAnagramBuilt) clearAnagramBuilt(); };
+  if (word.length < anagramMinLen()) { toast(`Words must be ${anagramMinLen()}+ letters.`); clearBuilt(); return; }
+  if (!canForm(word, room.anagram_letters)) { toast("Use only the letters shown!"); clearBuilt(); return; }
   await loadWords_dict();
-  if (!WORDS.has(word)) { toast(`"${word}" isn't in the Scrabble dictionary.`); Music.sting("wrong"); return; }
+  if (!WORDS.has(word)) { toast(`"${word}" isn't in the Scrabble dictionary.`); Music.sting("wrong"); clearBuilt(); return; }
   await loadWords(); // fresh snapshot so duplicate detection sees everyone's words
   const mode = repeatMode();
   const found = allWords.find((w) => w.word === word);
   if (found && found.player_id === session.player_id) {
-    toast(`You already found "${word}".`); Music.sting("wrong"); return;
+    toast(`You already found "${word}".`); Music.sting("wrong"); clearBuilt(); return;
   }
   if (found && mode === "off") {
     toast(`"${word}" was already found by ${found.game_players?.name || "someone"}!`);
     Music.sting("wrong");
+    clearBuilt();
     return;
   }
   let pts = anagramPoints(word.length);
@@ -1179,7 +1191,7 @@ async function submitWord(word) {
     headers: { Prefer: "return=representation" },
     body: JSON.stringify({ room_id: session.room_id, player_id: session.player_id, word, points: pts }),
   });
-  if (!r.ok) { toast("Someone beat you to it, or try again."); return; }
+  if (!r.ok) { toast("Someone beat you to it, or try again."); clearBuilt(); return; }
   const me = players.find((p) => p.id === session.player_id);
   let newScore = me ? me.score : 0;
   if (me) {
