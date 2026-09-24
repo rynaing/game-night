@@ -157,6 +157,8 @@ input:focus, select:focus { outline: 2px solid var(--accent); border-color: var(
 .word-row { display: flex; gap: 0.6rem; max-width: 480px; margin: 0 auto; }
 .word-row input { text-transform: uppercase; font-weight: 800; letter-spacing: 0.15em; text-align: center; }
 .word-list { display: flex; flex-wrap: wrap; gap: 0.4rem; justify-content: center; margin-top: 1rem; max-width: 560px; margin-left: auto; margin-right: auto; }
+/* In-game chip box: fixed height with its own scroll so new words never resize the page (iOS scroll jump). */
+#anagramChips { max-height: 9rem; overflow-y: auto; align-content: flex-start; padding: 0.25rem; }
 .word-chip { background: var(--card); border-radius: 8px; padding: 0.3rem 0.7rem; font-weight: 700; }
 .word-chip small { color: var(--good); margin-left: 0.3rem; }
 .words-title { text-align: center; margin: 1.6rem 0 0.4rem; }
