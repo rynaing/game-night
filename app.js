@@ -47,7 +47,11 @@ const Music = (() => {
   // Original game-show-style themes (NOT the Jeopardy melody — that's copyrighted).
   // Written bright (lead up in octave 5-6) so it's audible on phone speakers.
   // 4 bars x 16 steps of midi notes (0 = rest).
+  // home: mellow music-box welcome loop for the landing page.
   const SONGS = {
+    home: { bpm: 92, bassType: "triangle", bassVol: 0.4, leadType: "triangle", leadVol: 0.3,
+      bass: [48,0,0,0,0,0,0,0,55,0,0,0,0,0,0,0, 45,0,0,0,0,0,0,0,52,0,0,0,0,0,0,0, 41,0,0,0,0,0,0,0,48,0,0,0,0,0,0,0, 43,0,0,0,0,0,0,0,50,0,0,0,0,0,0,0],
+      lead: [72,0,0,76,0,0,79,0,0,0,84,0,79,0,0,0, 81,0,0,79,0,0,76,0,0,0,74,0,76,0,0,0, 77,0,0,81,0,0,84,0,0,0,81,0,79,0,0,0, 83,0,0,79,0,0,77,0,0,0,79,0,0,0,0,0] },
     lobby: { bpm: 120,
       bass: [48,0,48,0,55,0,48,0,48,0,48,0,55,0,53,0, 53,0,53,0,60,0,53,0,53,0,53,0,60,0,57,0, 55,0,55,0,62,0,55,0,55,0,55,0,62,0,59,0, 48,0,48,0,55,0,48,0,53,0,55,0,48,0,0,0],
       lead: [72,0,76,0,79,0,76,0,81,0,79,0,76,0,72,0, 77,0,81,0,84,0,81,0,79,0,81,0,77,0,74,0, 74,0,79,0,83,0,79,0,81,0,83,0,86,0,83,0, 84,0,81,0,79,0,76,0,74,0,72,0,74,0,0,0] },
@@ -82,10 +86,12 @@ const Music = (() => {
     const song = SONGS[mode];
     if (!song || !ctx) return;
     const stepDur = 60 / song.bpm / 4;
+    const bt = song.bassType || "square", lt = song.leadType || "square";
+    const bv = song.bassVol ?? 0.28, lv = song.leadVol ?? 0.34;
     while (nextT < ctx.currentTime + 0.15) {
       const i = step % 64, b = song.bass[i], l = song.lead[i];
-      if (b) tone(mf(b), nextT, stepDur * 0.9, "square", 0.28);
-      if (l) tone(mf(l), nextT, stepDur * 0.9, "square", 0.34);
+      if (b) tone(mf(b), nextT, stepDur * 0.9, bt, bv);
+      if (l) tone(mf(l), nextT, stepDur * 0.9, lt, lv);
       nextT += stepDur; step++;
     }
   }
@@ -385,6 +391,7 @@ function initHome() {
   }
   if (session?.role === "host" && session.room_id) { resumeHost(); return; }
   if (session?.role === "player" && session.room_id) { resumePlayer(); return; }
+  Music.setMode("home");
   show("view-home");
 }
 
@@ -936,6 +943,7 @@ async function leaveGame() {
   room = null; players = [];
   $("roomBadge").classList.add("hidden");
   history.replaceState(null, "", location.pathname);
+  Music.setMode("home");
   show("view-home");
 }
 
