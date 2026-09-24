@@ -42,6 +42,13 @@
     </div>
     <p class="hint">Players: open the join link or scan the QR on the host screen.</p>
     <p style="text-align:center"><button id="boardBtn" class="link-btn" style="font-size:1rem">🏆 All-time leaderboard</button></p>
+    <div id="resumeBox" class="hidden" style="margin-top:1.2rem;text-align:center">
+      <p class="hint" id="resumeHint"></p>
+      <p style="display:flex;gap:0.6rem;justify-content:center">
+        <button id="resumeBtn" class="btn primary">↩️ Rejoin</button>
+        <button id="resumeDiscard" class="btn ghost">Discard</button>
+      </p>
+    </div>
   </section>
 
   <!-- ============ ALL-TIME LEADERBOARD ============ -->
@@ -136,6 +143,7 @@
     <ul id="lobbyPlayers" class="player-list"></ul>
     <div class="row center">
       <button id="lobbyBackBtn" class="btn ghost">← Back</button>
+      <button id="lobbySettingsBtn" class="btn">⚙️ Settings</button>
       <button id="startGameBtn" class="btn primary big">Start game →</button>
     </div>
     <p class="attrib">Trivia questions by <a href="https://opentdb.com" target="_blank" rel="noopener">Open Trivia DB</a> (CC BY-SA 4.0)</p>
@@ -173,6 +181,6 @@
 
 <div id="toast" class="toast hidden"></div>
 
-<script src="app.js?v=1790221468"></script>
+<script src="app.js?v=1790221578"></script>
 </body>
 </html>
