@@ -675,8 +675,9 @@ function renderHostReveal(c) {
   nb.textContent = last ? "See results →" : "Next question →";
   nb.onclick = () => { clearInterval(revealTimer); revealTimer = null; nextTrivia(); };
   // Auto-advance after a countdown (one countdown per question; manual Next cancels it).
+  // Hosts can disable this with the "Auto-advance after reveal" toggle in settings.
   const rk = room.id + ":" + (room.round_ends_at || "") + ":" + room.current_index;
-  if (revealFor !== rk) {
+  if (room.settings?.auto_advance !== false && revealFor !== rk) {
     revealFor = rk;
     clearInterval(revealTimer);
     let s = REVEAL_COUNTDOWN;
@@ -756,6 +757,7 @@ function openRematchSettings() {
       chip.classList.toggle("on", selectedCats.includes(Number(chip.dataset.cid))));
     $("selDifficulty").value = s.difficulty || "";
     $("selCount").value = String(s.count || 10);
+    $("chkAutoAdvance").checked = s.auto_advance !== false;
   } else {
     $("selSeconds").value = String(s.seconds || 60);
   }
@@ -771,7 +773,7 @@ function cancelRematchEdit() {
 }
 function gatherSettings() {
   return pickedGame === "trivia"
-    ? { categories: [...selectedCats], difficulty: $("selDifficulty").value || null, count: parseInt($("selCount").value, 10) }
+    ? { categories: [...selectedCats], difficulty: $("selDifficulty").value || null, count: parseInt($("selCount").value, 10), auto_advance: $("chkAutoAdvance").checked }
     : { seconds: parseInt($("selSeconds").value, 10) };
 }
 async function startRematch() {
