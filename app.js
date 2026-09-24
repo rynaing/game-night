@@ -928,7 +928,9 @@ async function renderPlayerQuestion(c) {
   $("playTimer").classList.remove("hidden");
   if (answered) {
     c.innerHTML = `<p class="q-cat">${esc(q.category)}</p><p class="q-text" style="font-size:1.3rem">${esc(q.question)}</p>
-      <p class="locked">Locked in! ✅<br/><span style="font-size:1rem;color:var(--muted)">Waiting for everyone…</span></p>`;
+      <p class="locked">Locked in! ✅</p>
+      <div class="my-answer">Your answer:<br/><strong>${esc(answered.answer)}</strong></div>
+      <p class="hint" style="text-align:center">Waiting for everyone…</p>`;
     return;
   }
   c.innerHTML = `<p class="q-cat">${esc(q.category)}</p><p class="q-text" style="font-size:1.3rem">${esc(q.question)}</p>
