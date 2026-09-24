@@ -78,6 +78,9 @@ input:focus, select:focus { outline: 2px solid var(--accent); border-color: var(
 
 /* setup */
 .game-pick { display: grid; grid-template-columns: 1fr 1fr; gap: 0.8rem; margin: 1rem 0; }
+@media (min-width: 700px) {
+  .game-pick { grid-template-columns: 1fr 1fr 1fr; }
+}
 .pick-card {
   background: var(--card); border: 2px solid transparent; border-radius: var(--radius);
   padding: 1.2rem 0.6rem; color: var(--text); cursor: pointer;
