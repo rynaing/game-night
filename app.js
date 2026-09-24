@@ -449,15 +449,23 @@ const anagramPoints = (len) => ({ 3: 100, 4: 200, 5: 400, 6: 800 }[len] || 0);
    HOST FLOW
    ============================================================ */
 function initHome() {
+  Music.setMode("home");
   const params = new URLSearchParams(location.search);
   const code = (params.get("room") || "").toUpperCase();
-  if (code) { // player join link
-    joinWithCode(code);
-    return;
+  if (code) { joinWithCode(code); return; }
+  // Don't force-resume an old session (that trapped users in the previous room).
+  // Offer it as a choice instead, so starting/joining a new game never needs a fresh tab.
+  const rb = $("resumeBox");
+  if (session?.room_id && session?.room_code) {
+    $("resumeHint").textContent = session.role === "host"
+      ? `You were hosting room ${session.room_code}.`
+      : `You were playing in room ${session.room_code}${session.name ? ` as ${session.name}` : ""}.`;
+    $("resumeBtn").onclick = () => { rb.classList.add("hidden"); session.role === "host" ? resumeHost() : resumePlayer(); };
+    $("resumeDiscard").onclick = () => { session = null; saveSession(); rb.classList.add("hidden"); };
+    rb.classList.remove("hidden");
+  } else {
+    rb.classList.add("hidden");
   }
-  if (session?.role === "host" && session.room_id) { resumeHost(); return; }
-  if (session?.role === "player" && session.room_id) { resumePlayer(); return; }
-  Music.setMode("home");
   show("view-home");
 }
 
@@ -503,6 +511,22 @@ async function createRoom() {
     startLobbyPoll();
   } catch (e) {
     errBox.textContent = "Couldn't create the room: " + (e && e.message ? e.message : String(e));
+    errBox.classList.remove("hidden");
+  }
+  $("createRoomBtn").disabled = false;
+}
+async function applyLobbySettings() {
+  const errBox = $("setupError");
+  errBox.classList.add("hidden");
+  $("createRoomBtn").disabled = true;
+  try {
+    await updateRoom({ game_type: pickedGame, settings: gatherSettings(), pack_id: ACTIVE_PACK });
+    await loadRoom();
+    editingRoom = false; editingReturn = "start";
+    restoreSetupLabels();
+    renderLobby();
+  } catch (e) {
+    errBox.textContent = "Couldn't save: " + (e && e.message ? e.message : String(e));
     errBox.classList.remove("hidden");
   }
   $("createRoomBtn").disabled = false;
@@ -746,9 +770,9 @@ async function backToLobby() {
   renderLobby();
 }
 
-let editingRoom = false; // setup view is editing settings for an existing room (rematch)
-function openRematchSettings() {
-  editingRoom = true;
+let editingRoom = false; // setup view is editing settings for an existing room (rematch/lobby)
+let editingReturn = "start"; // "start" = rematch flow, "lobby" = tweak settings from lobby
+function prefillSetupFromRoom() {
   const s = room.settings || {};
   pickedGame = room.game_type || "trivia";
   document.querySelectorAll(".pick-card").forEach((x) => x.classList.toggle("selected", x.dataset.game === pickedGame));
@@ -768,15 +792,30 @@ function openRematchSettings() {
     $("selMinLen").value = String(s.min_len || 3);
     $("selTarget").value = String(s.target || 1500);
   }
+}
+function restoreSetupLabels() {
+  $("setupTitle").textContent = "Host a game";
+  $("createRoomBtn").textContent = "Create room →";
+}
+function openRematchSettings() {
+  editingRoom = true; editingReturn = "start";
+  prefillSetupFromRoom();
   $("setupTitle").textContent = "Rematch settings";
   $("createRoomBtn").textContent = "Start game →";
   show("view-setup");
 }
+function openLobbySettings() {
+  editingRoom = true; editingReturn = "lobby";
+  prefillSetupFromRoom();
+  $("setupTitle").textContent = "Game settings";
+  $("createRoomBtn").textContent = "Save →";
+  show("view-setup");
+}
 function cancelRematchEdit() {
   editingRoom = false;
-  $("setupTitle").textContent = "Host a game";
-  $("createRoomBtn").textContent = "Create room →";
-  renderStage();
+  const ret = editingReturn; editingReturn = "start";
+  restoreSetupLabels();
+  if (ret === "lobby") renderLobby(); else renderStage();
 }
 function gatherSettings() {
   return pickedGame === "trivia"
@@ -793,9 +832,8 @@ async function startRematch() {
     for (const p of players) await api(`game_players?id=eq.${p.id}`, { method: "PATCH", body: JSON.stringify({ score: 0 }) });
     await loadPlayers();
     await updateRoom({ game_type: pickedGame, settings: gatherSettings(), questions: [], current_index: 0, anagram_letters: null, round_ends_at: null });
-    editingRoom = false;
-    $("setupTitle").textContent = "Host a game";
-    $("createRoomBtn").textContent = "Create room →";
+    editingRoom = false; editingReturn = "start";
+    restoreSetupLabels();
     await startGame();
   } catch (e) {
     errBox.textContent = "Couldn't start: " + (e && e.message ? e.message : String(e));
@@ -1100,9 +1138,10 @@ function wire() {
   $("hostBtn").onclick = initSetup;
   $("boardBtn").onclick = showBoard;
   $("boardBackBtn").onclick = () => show("view-home");
-  $("backHomeBtn").onclick = () => { if (editingRoom) cancelRematchEdit(); else show("view-home"); };
-  $("createRoomBtn").onclick = () => { if (editingRoom) startRematch(); else createRoom(); };
-  $("lobbyBackBtn").onclick = () => { stopLobbyPoll(); show("view-home"); };
+  $("backHomeBtn").onclick = () => { if (editingRoom) cancelRematchEdit(); else initHome(); };
+  $("createRoomBtn").onclick = () => { if (editingRoom) { if (editingReturn === "lobby") applyLobbySettings(); else startRematch(); } else createRoom(); };
+  $("lobbyBackBtn").onclick = () => { stopLobbyPoll(); initHome(); };
+  $("lobbySettingsBtn").onclick = openLobbySettings;
   $("startGameBtn").onclick = startGame;
   $("stageEndBtn").onclick = async () => { await updateRoom({ status: "game_over" }); renderStage(); };
   const goJoin = () => joinWithCode($("joinCodeInput").value);
