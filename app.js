@@ -503,6 +503,7 @@ async function gradeTrivia() {
     const secs = Math.max(0, Math.min(20, (new Date(a.answered_at).getTime() - (endsAt - 20000)) / 1000));
     const pts = correct ? Math.max(100, 1000 - Math.floor(secs) * 40) : 0;
     await api(`game_answers?id=eq.${a.id}`, { method: "PATCH", body: JSON.stringify({ is_correct: correct, points: pts }) });
+    a.is_correct = correct; a.points = pts; // keep local copy fresh for the reveal screen
     if (pts) {
       const p = players.find((x) => x.id === a.player_id);
       if (p) await api(`game_players?id=eq.${p.id}`, { method: "PATCH", body: JSON.stringify({ score: p.score + pts }) });
