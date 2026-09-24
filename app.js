@@ -157,6 +157,19 @@ function show(id) {
   $(id).classList.remove("hidden");
   window.scrollTo(0, 0);
 }
+
+async function showBoard() {
+  show("view-board");
+  const list = $("boardList");
+  list.innerHTML = `<p class="hint">Loading…</p>`;
+  try {
+    const rows = await rpc("get_leaderboard", { p_limit: 20 });
+    if (!rows.length) { list.innerHTML = `<p class="hint">No games played yet. Be the first! 🎮</p>`; return; }
+    list.innerHTML = `<table class="score-table">` + rows.map((r, i) =>
+      `<tr class="rank-${i + 1}"><td>${i + 1}. ${esc(r.name)}</td><td class="pts">${r.total_points} pts</td><td style="opacity:.65;font-size:.85rem">${r.games_played} game${r.games_played == 1 ? "" : "s"}</td></tr>`
+    ).join("") + `</table>`;
+  } catch { list.innerHTML = `<p class="hint">Couldn't load the leaderboard. Try again.</p>`; }
+}
 function toast(msg, ms = 2600) {
   const t = $("toast");
   t.textContent = msg;
@@ -820,6 +833,8 @@ function renderPlayerGameOver(c) {
    ============================================================ */
 function wire() {
   $("hostBtn").onclick = initSetup;
+  $("boardBtn").onclick = showBoard;
+  $("boardBackBtn").onclick = () => show("view-home");
   $("backHomeBtn").onclick = () => show("view-home");
   $("createRoomBtn").onclick = createRoom;
   $("lobbyBackBtn").onclick = () => { stopLobbyPoll(); show("view-home"); };
