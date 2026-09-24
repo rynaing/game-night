@@ -147,6 +147,7 @@ input:focus, select:focus { outline: 2px solid var(--accent); border-color: var(
 
 /* anagram */
 .letters { display: flex; gap: 0.5rem; justify-content: center; margin: 1.2rem 0; flex-wrap: wrap; }
+.letters.rows-4 { display: grid; grid-template-columns: repeat(4, auto); }
 .tile {
   width: clamp(44px, 12vw, 64px); height: clamp(44px, 12vw, 64px);
   display: flex; align-items: center; justify-content: center;
