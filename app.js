@@ -328,14 +328,22 @@ async function loadWords_dict() {
   return WORDS;
 }
 const LETTER_BAG = "EEEEEEEEEEEEAAAAAAAAAIIIIIIIIIOOOOOOOONNNNNNRRRRRRTTTTTTLLLLSSSSUUUUDDDDGGGBBCCMMPPFFHHVVWWYYKJXQZ";
+const ANAGRAM_TARGET = 1500; // par score shown for each anagram round
+let SIXES = null; // cached 6-letter dictionary words
 function genLetters() {
-  for (let attempt = 0; attempt < 50; attempt++) {
-    let s = "";
-    for (let i = 0; i < 6; i++) s += LETTER_BAG[Math.floor(Math.random() * LETTER_BAG.length)];
-    const vowels = (s.match(/[AEIOU]/g) || []).length;
-    if (vowels >= 2 && vowels <= 4) return s;
-  }
-  return "AEIRST";
+  // Pick a real 6-letter word from the dictionary and scramble it, so there is
+  // always at least one 6-letter word hiding in the tiles.
+  if (!SIXES) SIXES = [...WORDS].filter((w) => w.length === 6);
+  const word = SIXES[Math.floor(Math.random() * SIXES.length)];
+  let arr = word.split(""), s;
+  do {
+    for (let i = arr.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [arr[i], arr[j]] = [arr[j], arr[i]];
+    }
+    s = arr.join("");
+  } while (s === word);
+  return s;
 }
 function canForm(word, letters) {
   const counts = {};
@@ -574,7 +582,7 @@ function renderHostAnagram(c) {
   }).join("");
   const latest = allWords.slice(-3).reverse().map((w) => `${esc(w.game_players?.name || "?")}: ${esc(w.word)}`).join(" · ");
   c.innerHTML = `
-    <p class="q-cat">Make words · 3+ letters · Scrabble dictionary</p>
+    <p class="q-cat">Make words · 3+ letters · 🎯 ${ANAGRAM_TARGET.toLocaleString()} target</p>
     <div class="letters">${tiles}</div>
     <table class="score-table">${board}</table>
     <p class="word-feed">${esc(latest)}</p>`;
@@ -784,10 +792,11 @@ function renderPlayerAnagram(c) {
   if (!input || c.dataset.anagramRound !== roundKey) {
     const tiles = room.anagram_letters.split("").map((ch) => `<div class="tile">${ch}</div>`).join("");
     c.innerHTML = `
-      <p class="q-cat">Make words · 3+ letters</p>
+      <p class="q-cat">Make words · 3+ letters · 🎯 ${ANAGRAM_TARGET.toLocaleString()} target</p>
       <div class="letters">${tiles}</div>
       <div class="word-row">
         <input id="wordInput" maxlength="6" placeholder="TYPE A WORD" autocomplete="off" autocapitalize="characters" spellcheck="false" />
+        <button id="shuffleBtn" class="btn" title="Shuffle letters">🔀</button>
         <button id="wordGo" class="btn primary">✓</button>
       </div>
       <div class="word-list" id="anagramChips"></div>`;
@@ -795,6 +804,16 @@ function renderPlayerAnagram(c) {
     input = $("wordInput");
     const submit = () => submitWord(input.value.trim().toUpperCase());
     $("wordGo").onclick = submit;
+    $("shuffleBtn").onclick = () => {
+      const cont = c.querySelector(".letters");
+      const tiles = [...cont.children];
+      for (let i = tiles.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [tiles[i], tiles[j]] = [tiles[j], tiles[i]];
+      }
+      tiles.forEach((t) => cont.appendChild(t));
+      Music.sting("click");
+    };
     input.addEventListener("keydown", (e) => { if (e.key === "Enter") submit(); });
     input.focus();
   }
@@ -823,6 +842,7 @@ async function submitWord(word) {
   if (!r.ok) { toast("Someone beat you to it, or try again."); return; }
   const me = players.find((p) => p.id === session.player_id);
   if (me) await api(`game_players?id=eq.${me.id}`, { method: "PATCH", body: JSON.stringify({ score: me.score + pts }) });
+  const crossed = me && me.score < ANAGRAM_TARGET && me.score + pts >= ANAGRAM_TARGET;
   await loadPlayers(); await loadWords();
   ping("words"); ping("scores");
   refreshChips();
@@ -830,8 +850,8 @@ async function submitWord(word) {
   if (input) { input.value = ""; input.focus(); }
   const me2 = players.find((p) => p.id === session.player_id);
   if (me2) $("meScore").textContent = me2.score;
-  toast(`+${pts} — nice!`, 1200);
-  Music.sting("pop");
+  if (crossed) { toast(`🎯 ${ANAGRAM_TARGET.toLocaleString()} target smashed!`, 2000); Music.sting("win"); }
+  else { toast(`+${pts} — nice!`, 1200); Music.sting("pop"); }
 }
 
 function renderPlayerGameOver(c) {
