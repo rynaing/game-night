@@ -157,3 +157,4 @@ h3 { margin-top: 1.6rem; }
 @media (min-width: 700px) {
   .home-grid { grid-template-columns: 1fr 1fr; align-items: stretch; }
 }
+.link-btn { background: none; border: none; color: var(--accent); font: inherit; font-size: 0.9rem; text-decoration: underline; cursor: pointer; padding: 0; }
