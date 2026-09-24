@@ -296,6 +296,8 @@ async function loadWords() {
   if (session.role === "player") myWords = allWords.filter((w) => w.player_id === session.player_id);
 }
 let hostAnswers = [];
+let revealTimer = null, revealFor = null; // auto-advance countdown state
+const REVEAL_COUNTDOWN = 5;
 async function loadMyAnswer() {
   const r = await api(`game_answers?player_id=eq.${session.player_id}&question_index=eq.${room.current_index}&select=*`);
   myAnswers = await r.json();
@@ -311,20 +313,46 @@ async function otdbToken() {
   }
   return t;
 }
+let selectedCats = []; // up to 3 OpenTDB category ids; empty = all categories
 async function loadCategories() {
   try {
     const r = await fetch("https://opentdb.com/api_category.php");
     otdbCategories = (await r.json()).trivia_categories || [];
-    const sel = $("selCategory");
+    const box = $("catChips");
+    box.innerHTML = "";
     otdbCategories.forEach((c) => {
-      const o = document.createElement("option");
-      o.value = c.id; o.textContent = c.name.replace(/^Entertainment: |^Science: /, "");
-      sel.appendChild(o);
+      const b = document.createElement("button");
+      b.type = "button";
+      b.className = "chip" + (selectedCats.includes(c.id) ? " on" : "");
+      b.textContent = c.name.replace(/^Entertainment: |^Science: /, "");
+      b.onclick = () => toggleCat(c.id, b);
+      box.appendChild(b);
     });
-  } catch { /* categories optional */ }
+  } catch { $("catChips").innerHTML = `<p class="hint">Couldn't load categories — all will be used.</p>`; }
+}
+function toggleCat(id, el) {
+  const i = selectedCats.indexOf(id);
+  if (i >= 0) { selectedCats.splice(i, 1); el.classList.remove("on"); }
+  else {
+    if (selectedCats.length >= 3) { toast("Up to 3 categories — tap a picked one to remove it"); return; }
+    selectedCats.push(id); el.classList.add("on");
+  }
+  Music.sting("click");
 }
 const dec = (s) => { try { return decodeURIComponent(s); } catch { return s; } };
-async function fetchOpenTDBQuestions({ category, difficulty, amount }) {
+async function fetchOpenTDBQuestions({ categories, category, difficulty, amount }) {
+  // Up to 3 categories: split the request per category, fetch in parallel, interleave.
+  const cats = ((categories && categories.length ? categories : (category ? [category] : []))).slice(0, 3).map(Number);
+  if (cats.length <= 1) return fetchCat(cats[0] || null, difficulty, amount);
+  const per = cats.map((_, i) => Math.floor(amount / cats.length) + (i < amount % cats.length ? 1 : 0));
+  const lists = await Promise.all(cats.map((c, i) => fetchCat(c, difficulty, per[i]).catch(() => [])));
+  const merged = [];
+  for (let i = 0; i < Math.max(...lists.map((l) => l.length)); i++)
+    for (const l of lists) if (l[i]) merged.push(l[i]);
+  if (!merged.length) throw new Error("No questions available for those settings — try different ones.");
+  return shuffle(merged);
+}
+async function fetchCat(category, difficulty, amount) {
   const token = await otdbToken();
   const q = new URLSearchParams({ amount: String(amount), type: "multiple", encode: "url3986", token });
   if (category) q.set("category", category);
@@ -423,7 +451,7 @@ async function createRoom() {
   const errBox = $("setupError");
   errBox.classList.add("hidden");
   const settings = pickedGame === "trivia"
-    ? { category: $("selCategory").value || null, difficulty: $("selDifficulty").value || null, count: parseInt($("selCount").value, 10) }
+    ? { categories: [...selectedCats], difficulty: $("selDifficulty").value || null, count: parseInt($("selCount").value, 10) }
     : { seconds: parseInt($("selSeconds").value, 10) };
   $("createRoomBtn").disabled = true;
   try {
@@ -479,7 +507,8 @@ async function updateRoom(patch) {
 async function startTrivia() {
   const s = room.settings || {};
   const questions = await PACKS[room.pack_id].fetchQuestions({
-    category: s.category, difficulty: s.difficulty, amount: s.count || 10,
+    categories: s.categories || (s.category ? [s.category] : []),
+    difficulty: s.difficulty, amount: s.count || 10,
   });
   await updateRoom({
     questions,
@@ -592,11 +621,27 @@ function renderHostReveal(c) {
       <p class="q-cat">Correct answer</p>
       <p class="reveal-answer">${esc(q.correct_answer)}</p>
       <table class="score-table">${rows}</table>
+      <p class="reveal-count" id="revealCount"></p>
     </div>`;
   const nb = $("stageNextBtn");
   nb.classList.remove("hidden");
   nb.textContent = last ? "See results →" : "Next question →";
-  nb.onclick = nextTrivia;
+  nb.onclick = () => { clearInterval(revealTimer); revealTimer = null; nextTrivia(); };
+  // Auto-advance after a countdown (one countdown per question; manual Next cancels it).
+  const rk = room.id + ":" + room.current_index;
+  if (revealFor !== rk) {
+    revealFor = rk;
+    clearInterval(revealTimer);
+    let s = REVEAL_COUNTDOWN;
+    const el = $("revealCount");
+    const show = () => { if (el) el.textContent = last ? `Results in ${s}…` : `Next question in ${s}…`; };
+    show(); Music.tick(s);
+    revealTimer = setInterval(() => {
+      s--;
+      if (s <= 0) { clearInterval(revealTimer); revealTimer = null; nextTrivia(); return; }
+      show(); Music.tick(s);
+    }, 1000);
+  }
 }
 
 function renderHostAnagram(c) {
