@@ -1,5 +1,5 @@
 /* ============================================================
-   GAME NIGHT — Jackbox-style party games (trivia + anagrams)
+   GAME NIGHT — party games for the big screen (trivia + anagrams)
    Stack: GitHub Pages + Supabase (REST + Realtime Broadcast)
    ============================================================ */
 
