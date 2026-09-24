@@ -100,6 +100,7 @@ html.gated body > :not(#gate){display:none !important}
     </div>
     <p class="hint">Players: open the join link or scan the QR on the host screen.</p>
     <p style="text-align:center"><button id="boardBtn" class="link-btn" style="font-size:1rem">🏆 All-time leaderboard</button></p>
+    <p style="text-align:center;margin-top:0.6rem"><button id="soloBtn" class="btn">🧵 Play Common Threads solo</button></p>
     <div id="resumeBox" class="hidden" style="margin-top:1.2rem;text-align:center">
       <p class="hint" id="resumeHint"></p>
       <p style="display:flex;gap:0.6rem;justify-content:center">
@@ -132,6 +133,10 @@ html.gated body > :not(#gate){display:none !important}
       <button class="pick-card" data-game="mostlikely">
         <span class="pick-emoji">🗳️</span><span>Most Likely To</span>
         <small>vote on each other</small>
+      </button>
+      <button class="pick-card" data-game="commonthreads">
+        <span class="pick-emoji">🧵</span><span>Common Threads</span>
+        <small>16 words · 4 hidden links</small>
       </button>
     </div>
 
@@ -201,6 +206,17 @@ html.gated body > :not(#gate){display:none !important}
       <p class="pack-note">Everyone votes for who the prompt describes best. Most votes wins the round — ties all score.</p>
     </div>
 
+    <div id="cxSettings" class="settings hidden">
+      <label>Puzzles
+        <select id="selCxRounds">
+          <option value="3">3</option>
+          <option value="5" selected>5</option>
+          <option value="10">10</option>
+        </select>
+      </label>
+      <p class="pack-note">Find the 4 hidden groups of 4. Yellow 100 · Green 200 · Blue 300 · Purple 400 — plus 200 for the final group. 4 mistakes and you're locked out.</p>
+    </div>
+
     <div class="row">
       <button id="backHomeBtn" class="btn ghost">← Back</button>
       <button id="createRoomBtn" class="btn primary">Create room →</button>
@@ -257,12 +273,17 @@ html.gated body > :not(#gate){display:none !important}
         <p>The host's screen stopped responding, so the game is paused. Reopen the game on the host device and rejoin — it picks up right where it left off.</p>
       </div>
     </div>
+  <!-- ============ SOLO: common threads ============ -->
+  <section id="view-solo" class="view hidden">
+    <div id="soloContent"></div>
+    <p style="text-align:center;margin-top:1rem"><button id="soloBackBtn" class="btn ghost">← Back</button></p>
   </section>
 
 </main>
 
 <div id="toast" class="toast hidden"></div>
 
-<script src="app.js?v=1790257083"></script>
+<script src="cx_puzzles.js?v=1790262597"></script>
+<script src="app.js?v=1790262597"></script>
 </body>
 </html>
