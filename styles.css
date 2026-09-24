@@ -82,6 +82,8 @@ input:focus, select:focus { outline: 2px solid var(--accent); border-color: var(
 .pick-emoji { font-size: 2.2rem; }
 .settings { display: grid; gap: 0.9rem; margin: 1rem 0; }
 .settings label { display: grid; gap: 0.35rem; font-weight: 600; font-size: 0.95rem; }
+.settings label.toggle-row { display: flex; align-items: center; gap: 0.6rem; cursor: pointer; }
+.settings label.toggle-row input { width: 1.2rem; height: 1.2rem; accent-color: var(--accent); cursor: pointer; }
 .pack-note { color: var(--muted); font-size: 0.85rem; }
 .attrib { text-align: center; color: var(--muted); font-size: 0.8rem; margin-top: 2rem; }
 .attrib a { color: var(--accent2); }
