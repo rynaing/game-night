@@ -133,6 +133,7 @@
       <button id="createRoomBtn" class="btn primary">Create room →</button>
     </div>
     <p id="setupError" class="error hidden"></p>
+    <p class="hint" style="text-align:center;margin-top:1.2rem"><button id="resetBoardBtn" class="link-btn">Reset all-time leaderboard</button></p>
   </section>
 
   <!-- ============ HOST LOBBY ============ -->
@@ -177,12 +178,18 @@
     <div id="playTimer" class="timer hidden"></div>
     <div id="playContent"></div>
     <p class="me-line">Playing as <strong id="meName"></strong> · <span id="meScore">0</span> pts · <button id="leaveBtn" class="link-btn">Leave</button></p>
+    <div id="hostLostOverlay" class="overlay hidden">
+      <div class="overlay-card">
+        <p class="overlay-title">📡 Host disconnected</p>
+        <p>The host's screen stopped responding, so the game is paused. Reopen the game on the host device and rejoin — it picks up right where it left off.</p>
+      </div>
+    </div>
   </section>
 
 </main>
 
 <div id="toast" class="toast hidden"></div>
 
-<script src="app.js?v=1790225266"></script>
+<script src="app.js?v=1790227345"></script>
 </body>
 </html>
