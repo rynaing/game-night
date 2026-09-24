@@ -1,6 +1,6 @@
 # Game Night
 
-Jackbox-style party games: **Trivia** + **Anagrams**. One screen hosts (TV/laptop), everyone else plays on their phone via QR code or a 4-letter room code.
+Party games for the big screen: **Trivia** + **Anagrams**. One screen hosts (TV/laptop), everyone else plays on their phone via QR code or a 4-letter room code.
 
 - **Trivia** — questions from Open Trivia DB (free, no key). Fastest correct answer scores most.
 - **Anagrams** — 6 letters, 60 seconds, 3+ letter words validated against the Scrabble (ENABLE) dictionary. Longer words score more.
