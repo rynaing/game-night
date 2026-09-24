@@ -737,12 +737,14 @@ function renderHostAnagram(c) {
     const n = allWords.filter((w) => w.player_id === p.id).length;
     return `<tr class="${i === 0 ? "rank-1" : ""}"><td>${esc(p.name)} <small style="color:var(--muted)">(${n} words)</small></td><td class="pts">${p.score}</td></tr>`;
   }).join("");
-  const latest = allWords.slice(-3).reverse().map((w) => `${esc(w.game_players?.name || "?")}: ${esc(w.word)}`).join(" · ");
+  // NOTE: words themselves stay hidden during the round — showing them would
+  // give answers away to everyone watching the host screen. Full breakdown
+  // appears on the game-over screen instead.
   c.innerHTML = `
     <p class="q-cat">Make words · ${anagramMinLen()}+ letters · 🎯 ${anagramTarget().toLocaleString()} target</p>
     <div class="letters">${tiles}</div>
     <table class="score-table">${board}</table>
-    <p class="word-feed">${esc(latest)}</p>`;
+    <p class="word-feed">${allWords.length} word${allWords.length === 1 ? "" : "s"} found so far…</p>`;
   $("stageTimer").classList.remove("hidden");
 }
 
