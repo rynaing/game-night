@@ -896,6 +896,27 @@ async function resumePlayer() {
 
 /* ---------------- player rendering ---------------- */
 let shuffledFor = -1, shuffledAnswers = [];
+let ansScale = 1;
+try { const v = parseFloat(localStorage.getItem("gn_ans_scale")); if (v >= 0.8 && v <= 1.6) ansScale = v; } catch {}
+function applyAnsScale() { document.documentElement.style.setProperty("--ans-scale", ansScale); }
+function bumpAnsScale(d) {
+  ansScale = Math.min(1.6, Math.max(0.8, Math.round((ansScale + d) * 10) / 10));
+  try { localStorage.setItem("gn_ans_scale", String(ansScale)); } catch {}
+  applyAnsScale();
+  document.querySelectorAll(".ans-scale-label").forEach((el) => { el.textContent = Math.round(ansScale * 100) + "%"; });
+}
+function scaleCtlHTML() {
+  return `<div class="scale-ctl">
+    <button class="icon-btn ans-smaller" aria-label="Smaller answers">A-</button>
+    <span class="ans-scale-label hint-inline">${Math.round(ansScale * 100)}%</span>
+    <button class="icon-btn ans-bigger" aria-label="Bigger answers">A+</button>
+  </div>`;
+}
+function wireScaleCtl(c) {
+  const sm = c.querySelector(".ans-smaller"), bg = c.querySelector(".ans-bigger");
+  if (sm) sm.onclick = () => bumpAnsScale(-0.1);
+  if (bg) bg.onclick = () => bumpAnsScale(0.1);
+}
 function render() {
   if (session.role === "host") { room.status === "lobby" ? renderLobby() : renderStage(); return; }
   // player
@@ -932,11 +953,15 @@ async function renderPlayerQuestion(c) {
     c.innerHTML = `<p class="q-cat">${esc(q.category)}</p><p class="q-text" style="font-size:1.3rem">${esc(q.question)}</p>
       <p class="locked">Locked in! ✅</p>
       <div class="my-answer">Your answer:<br/><strong>${esc(answered.answer)}</strong></div>
-      <p class="hint" style="text-align:center">Waiting for everyone…</p>`;
+      <p class="hint" style="text-align:center">Waiting for everyone…</p>
+      ${scaleCtlHTML()}`;
+    wireScaleCtl(c);
     return;
   }
   c.innerHTML = `<p class="q-cat">${esc(q.category)}</p><p class="q-text" style="font-size:1.3rem">${esc(q.question)}</p>
-    <div class="answer-grid">${shuffledAnswers.map((a) => `<button class="answer-btn" data-a="${esc(a)}">${esc(a)}</button>`).join("")}</div>`;
+    <div class="answer-grid">${shuffledAnswers.map((a) => `<button class="answer-btn" data-a="${esc(a)}">${esc(a)}</button>`).join("")}</div>
+    ${scaleCtlHTML()}`;
+  wireScaleCtl(c);
   c.querySelectorAll(".answer-btn").forEach((b) => {
     b.onclick = async () => {
       b.disabled = true;
@@ -1115,4 +1140,4 @@ async function leaveGame() {
   show("view-home");
 }
 
-document.addEventListener("DOMContentLoaded", () => { wire(); initHome(); });
+document.addEventListener("DOMContentLoaded", () => { wire(); applyAnsScale(); initHome(); });
