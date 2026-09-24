@@ -247,7 +247,7 @@ async function createRoom() {
     $("roomBadge").classList.remove("hidden");
     renderLobby();
   } catch (e) {
-    errBox.textContent = "Couldn't create the room. Check your connection and try again.";
+    errBox.textContent = "Couldn't create the room: " + (e && e.message ? e.message : String(e));
     errBox.classList.remove("hidden");
   }
   $("createRoomBtn").disabled = false;
