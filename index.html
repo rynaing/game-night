@@ -14,6 +14,11 @@
   <span class="logo">🎮 Game Night</span>
   <span id="roomBadge" class="room-badge hidden"></span>
   <div class="sound-ctl">
+    <select id="styleSelect" aria-label="Music style">
+      <option value="gameshow">🎺 Game show</option>
+      <option value="kawaii">🌸 Kawaii</option>
+      <option value="chiptune">👾 Chiptune</option>
+    </select>
     <input id="volSlider" type="range" min="0" max="100" step="1" value="50" aria-label="Music volume" />
     <button id="muteBtn" class="icon-btn" aria-label="Toggle sound">🔊</button>
   </div>
@@ -147,6 +152,6 @@
 
 <div id="toast" class="toast hidden"></div>
 
-<script src="app.js?v=1790220567"></script>
+<script src="app.js?v=1790220782"></script>
 </body>
 </html>
