@@ -11,6 +11,30 @@ const sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
 
+const BUILD = "1790222681"; // deploy.sh replaces this with a timestamp
+
+// Stale-tab nudge: each deploy ships a fresh app.js?v= token, but a tab opened
+// before the deploy keeps running old code. Check for a newer build once a
+// minute (and when the tab becomes visible) and offer a one-tap reload.
+let updateBannerShown = false;
+async function checkForUpdate() {
+  if (updateBannerShown || !/^\d+$/.test(String(BUILD))) return;
+  try {
+    const html = await (await fetch("index.html?v=" + Date.now(), { cache: "no-store" })).text();
+    const m = html.match(/app\.js\?v=(\d+)/);
+    if (m && m[1] !== String(BUILD)) {
+      updateBannerShown = true;
+      const b = document.createElement("div");
+      b.id = "updateBanner";
+      b.innerHTML = `🔄 New version available <button class="btn primary">Update</button>`;
+      b.querySelector("button").onclick = () => location.reload();
+      document.body.prepend(b);
+    }
+  } catch {}
+}
+setInterval(checkForUpdate, 60000);
+document.addEventListener("visibilitychange", () => { if (!document.hidden) checkForUpdate(); });
+
 // QR codes are drawn on-device with a tiny local library — the join URL never
 // leaves the page. Falls back to a free QR image API only if the library fails.
 function makeQr(url) {
