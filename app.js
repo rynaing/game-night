@@ -1077,7 +1077,7 @@ function renderPlayerAnagram(c) {
       <p class="q-cat">Make words · ${anagramMinLen()}+ letters · 🎯 ${anagramTarget().toLocaleString()} target</p>
       <div class="letters">${tiles}</div>
       <div class="word-row">
-        <input id="wordInput" maxlength="6" placeholder="TYPE A WORD" autocomplete="off" autocapitalize="characters" spellcheck="false" />
+        <input id="wordInput" maxlength="6" placeholder="TYPE A WORD" autocomplete="off" autocorrect="off" autocapitalize="characters" spellcheck="false" />
         <button id="shuffleBtn" class="btn" title="Shuffle letters">🔀</button>
         <button id="wordGo" class="btn primary">✓</button>
       </div>
