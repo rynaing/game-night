@@ -98,17 +98,42 @@ function shuffle(arr) {
 }
 
 /* ---------------- realtime (broadcast pings + REST refetch) ---------------- */
+let rtReady = false;
+const pingQueue = [];
 function connectChannel() {
   if (rtChannel) sb.removeChannel(rtChannel);
+  rtReady = false;
   rtChannel = sb.channel("game:" + session.room_id, { config: { broadcast: { ack: true } } });
   rtChannel
     .on("broadcast", { event: "state" }, async () => { await loadRoom(); render(); })
     .on("broadcast", { event: "players" }, async () => { await loadPlayers(); render(); })
     .on("broadcast", { event: "answers" }, async () => { if (session.role === "host") { await loadHostAnswers(); render(); } })
     .on("broadcast", { event: "words" }, async () => { await loadWords(); render(); })
-    .subscribe();
+    .subscribe((status) => { rtReady = status === "SUBSCRIBED"; if (rtReady) flushPings(); });
 }
-function ping(ev) { try { rtChannel?.send({ type: "broadcast", event: ev }); } catch {} }
+// Queue pings until the channel is actually subscribed — sending on a
+// not-yet-open channel silently drops the message (this was losing joins).
+function ping(ev) {
+  if (rtReady && rtChannel) { try { rtChannel.send({ type: "broadcast", event: ev }); return; } catch {} }
+  if (pingQueue.length < 10) pingQueue.push(ev);
+}
+function flushPings() {
+  while (pingQueue.length && rtReady && rtChannel) {
+    const ev = pingQueue.shift();
+    try { rtChannel.send({ type: "broadcast", event: ev }); } catch {}
+  }
+}
+// Host lobby safety net: refetch the player list every 3s while in the lobby,
+// so a lost broadcast can never leave the lobby stuck at 0.
+let lobbyPoll = null;
+function startLobbyPoll() {
+  stopLobbyPoll();
+  lobbyPoll = setInterval(async () => {
+    if (session?.role !== "host" || room?.status !== "lobby") return;
+    try { await loadPlayers(); renderLobby(); } catch {}
+  }, 3000);
+}
+function stopLobbyPoll() { if (lobbyPoll) { clearInterval(lobbyPoll); lobbyPoll = null; } }
 
 /* ---------------- data loaders ---------------- */
 async function loadRoom() {
@@ -226,7 +251,7 @@ async function resumeHost() {
   connectChannel();
   $("roomBadge").textContent = "🏠 " + room.room_code;
   $("roomBadge").classList.remove("hidden");
-  if (room.status === "lobby") renderLobby(); else renderStage();
+  if (room.status === "lobby") { renderLobby(); startLobbyPoll(); } else renderStage();
   startTick();
 }
 
@@ -260,6 +285,7 @@ async function createRoom() {
     $("roomBadge").textContent = "🏠 " + room.room_code;
     $("roomBadge").classList.remove("hidden");
     renderLobby();
+    startLobbyPoll();
   } catch (e) {
     errBox.textContent = "Couldn't create the room: " + (e && e.message ? e.message : String(e));
     errBox.classList.remove("hidden");
@@ -279,6 +305,7 @@ function renderLobby() {
 
 async function startGame() {
   if (!players.length) { toast("Wait for at least one player to join!"); return; }
+  stopLobbyPoll();
   $("startGameBtn").disabled = true;
   try {
     if (room.game_type === "trivia") await startTrivia();
@@ -661,7 +688,7 @@ function wire() {
   $("hostBtn").onclick = initSetup;
   $("backHomeBtn").onclick = () => show("view-home");
   $("createRoomBtn").onclick = createRoom;
-  $("lobbyBackBtn").onclick = () => { show("view-home"); };
+  $("lobbyBackBtn").onclick = () => { stopLobbyPoll(); show("view-home"); };
   $("startGameBtn").onclick = startGame;
   $("stageEndBtn").onclick = async () => { await updateRoom({ status: "game_over" }); renderStage(); };
   const goJoin = () => joinWithCode($("joinCodeInput").value);
@@ -681,6 +708,7 @@ async function leaveGame() {
     }
   } catch {}
   if (rtChannel) { try { sb.removeChannel(rtChannel); } catch {} rtChannel = null; }
+  rtReady = false; pingQueue.length = 0; stopLobbyPoll();
   session = null; saveSession();
   room = null; players = [];
   $("roomBadge").classList.add("hidden");
