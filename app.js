@@ -11,7 +11,7 @@ const sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
 
-const BUILD = "1790224103"; // deploy.sh replaces this with a timestamp
+const BUILD = "1790224856"; // deploy.sh replaces this with a timestamp
 
 // Stale-tab nudge: each deploy ships a fresh app.js?v= token, but a tab opened
 // before the deploy keeps running old code. Check for a newer build once a
@@ -776,7 +776,9 @@ function renderHostReveal(c) {
 }
 
 function renderHostAnagram(c) {
-  const tiles = room.anagram_letters.split("").map((ch) => `<div class="tile">${ch}</div>`).join("");
+  const letters = room.anagram_letters.split("");
+  const rowsCls = letters.length === 8 ? "letters rows-4" : "letters";
+  const tiles = letters.map((ch) => `<div class="tile">${ch}</div>`).join("");
   const board = [...players].sort((a, b) => b.score - a.score).map((p, i) => {
     const n = allWords.filter((w) => w.player_id === p.id).length;
     return `<tr class="${i === 0 ? "rank-1" : ""}"><td>${esc(p.name)} <small style="color:var(--muted)">(${n} words)</small></td><td class="pts">${p.score}</td></tr>`;
@@ -786,7 +788,7 @@ function renderHostAnagram(c) {
   // appears on the game-over screen instead.
   c.innerHTML = `
     <p class="q-cat">Make words · ${anagramMinLen()}+ letters</p>
-    <div class="letters">${tiles}</div>
+    <div class="${rowsCls}">${tiles}</div>
     <table class="score-table">${board}</table>
     <p class="word-feed">${allWords.length} word${allWords.length === 1 ? "" : "s"} found so far…</p>`;
   $("stageTimer").classList.remove("hidden");
@@ -1116,10 +1118,12 @@ function renderPlayerAnagram(c) {
   // chips — rebuilding would wipe the in-progress tapped word.
   const roundKey = room.id + "|" + (room.round_ends_at || "");
   if (!c.dataset.anagramRound || c.dataset.anagramRound !== roundKey) {
-    const tiles = room.anagram_letters.split("").map((ch) => `<button type="button" class="tile" data-ch="${ch}">${ch}</button>`).join("");
+    const letters = room.anagram_letters.split("");
+    const tiles = letters.map((ch) => `<button type="button" class="tile" data-ch="${ch}">${ch}</button>`).join("");
+    const rowsCls = letters.length === 8 ? "letters rows-4" : "letters";
     c.innerHTML = `
       <p class="q-cat">Make words · ${anagramMinLen()}+ letters</p>
-      <div class="letters">${tiles}</div>
+      <div class="${rowsCls}">${tiles}</div>
       <div class="build-word" id="buildWord"></div>
       <div class="word-row">
         <button id="shuffleBtn" class="btn" title="Shuffle letters">🔀</button>
