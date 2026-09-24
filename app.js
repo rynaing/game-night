@@ -1099,8 +1099,11 @@ function renderPlayerAnagram(c) {
 function refreshChips() {
   const el = $("anagramChips");
   if (!el) return;
+  // Chat-style: only auto-scroll when the user was already near the bottom.
+  const nearBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 40;
   const chips = myWords.map((w) => `<span class="word-chip">${esc(w.word)}<small>+${w.points}</small></span>`).join("");
   el.innerHTML = chips || `<span style="color:var(--muted)">No words yet — go!</span>`;
+  if (nearBottom) el.scrollTop = el.scrollHeight;
 }
 
 async function submitWord(word) {
