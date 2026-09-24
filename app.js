@@ -911,9 +911,11 @@ function wire() {
   syncMuteIcon();
   $("muteBtn").onclick = () => { Music.toggleMute(); syncMuteIcon(); };
   const vs = $("volSlider");
-  vs.value = Math.round(Music.getVolume() * 100);
-  vs.addEventListener("input", () => { Music.unlock(); Music.setVolume(vs.value / 100); syncMuteIcon(); });
-  vs.addEventListener("change", () => Music.sting("click"));
+  if (vs) {
+    vs.value = Math.round(Music.getVolume() * 100);
+    vs.addEventListener("input", () => { Music.unlock(); Music.setVolume(vs.value / 100); syncMuteIcon(); });
+    vs.addEventListener("change", () => Music.sting("click"));
+  }
   document.addEventListener("pointerdown", () => Music.unlock());
   document.addEventListener("visibilitychange", () => { if (!document.hidden) Music.unlock(); });
   document.addEventListener("click", (e) => { if (e.target.closest(".btn")) Music.sting("click"); });
