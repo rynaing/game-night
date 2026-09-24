@@ -206,3 +206,8 @@ h3 { margin-top: 1.6rem; }
 }
 .link-btn { background: none; border: none; color: var(--accent); font: inherit; font-size: 0.9rem; text-decoration: underline; cursor: pointer; padding: 0; }
 .icon-btn { background: none; border: none; font-size: 1.35rem; cursor: pointer; padding: 0.2rem; line-height: 1; }
+
+/* host-disconnect overlay (player view) */
+.overlay { position: fixed; inset: 0; background: rgba(8, 5, 20, 0.78); display: flex; align-items: center; justify-content: center; z-index: 60; padding: 1rem; }
+.overlay-card { background: var(--card); border: 1px solid #3b3270; border-radius: 14px; padding: 1.5rem; max-width: 420px; text-align: center; }
+.overlay-title { font-size: 1.3rem; font-weight: 800; margin: 0 0 0.5rem; }
