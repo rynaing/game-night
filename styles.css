@@ -171,6 +171,8 @@ button.tile.used { opacity: 0.25; transform: scale(0.92); box-shadow: 0 2px 0 #8
 #anagramChips { max-height: 9rem; overflow-y: auto; align-content: flex-start; padding: 0.25rem; }
 .word-chip { background: var(--card); border-radius: 8px; padding: 0.3rem 0.7rem; font-weight: 700; }
 .word-chip small { color: var(--good); margin-left: 0.3rem; }
+#updateBanner { position: fixed; top: 0; left: 0; right: 0; z-index: 200; background: #2a1f4d; border-bottom: 2px solid var(--accent); padding: 0.6rem 1rem; text-align: center; font-weight: 700; }
+#updateBanner .btn { margin-left: 0.6rem; padding: 0.35rem 0.9rem; }
 .words-title { text-align: center; margin: 1.6rem 0 0.4rem; }
 .words-group { margin: 0 auto 0.6rem; max-width: 680px; }
 .words-name { font-weight: 700; text-align: center; margin: 0.6rem 0 0.35rem; }
