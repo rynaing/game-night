@@ -158,3 +158,4 @@ h3 { margin-top: 1.6rem; }
   .home-grid { grid-template-columns: 1fr 1fr; align-items: stretch; }
 }
 .link-btn { background: none; border: none; color: var(--accent); font: inherit; font-size: 0.9rem; text-decoration: underline; cursor: pointer; padding: 0; }
+.icon-btn { background: none; border: none; font-size: 1.35rem; cursor: pointer; padding: 0.2rem; line-height: 1; }
