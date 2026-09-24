@@ -11,7 +11,7 @@ const sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
 
-const BUILD = "1790262606"; // deploy.sh replaces this with a timestamp
+const BUILD = "1790263523"; // deploy.sh replaces this with a timestamp
 
 // Stale-tab nudge: each deploy ships a fresh app.js?v= token, but a tab opened
 // before the deploy keeps running old code. Check for a newer build once a
@@ -237,6 +237,8 @@ let hostGuesses = [];     // cx_guesses rows for the current puzzle (host + play
 let cxSelected = [];      // words currently tapped on this device (player / solo)
 let cxSelKey = "";        // room+index (or solo puzzle id) the selection belongs to
 let cxOrder = [];         // local display order for shuffle (player / solo)
+let cxStatusMsg = "";     // last wrong-guess status line, kept across re-renders (party)
+let soloStatusMsg = "";   // same for solo mode
 
 /* ---------------- most likely to: prompt deck ----------------
    Warm, funny, family-friendly — written for 2 people on a couch up to a
@@ -1706,7 +1708,7 @@ async function renderPlayerCx(c) {
   await loadCxGuesses();
   const puz = cxPuzzle();
   const key = session.room_id + ":" + room.current_index;
-  if (cxSelKey !== key) { cxSelKey = key; cxSelected = []; cxOrder = cxRemaining(puz); }
+  if (cxSelKey !== key) { cxSelKey = key; cxSelected = []; cxOrder = cxRemaining(puz); cxStatusMsg = ""; }
   const solved = cxSolvedTiers();
   const done = solved.length === 4;
   const remaining = cxRemaining(puz);
@@ -1725,7 +1727,7 @@ async function renderPlayerCx(c) {
     ${done ? `<p class="locked">Puzzle complete! 🎉</p><p class="hint" style="text-align:center">Waiting for the host…</p>`
       : locked ? `<p class="locked">You're locked out for this puzzle 😅</p><div class="cx-grid">${tiles}</div>`
       : `<div class="cx-grid">${tiles}</div>
-        <div class="cx-status" id="cxStatus"></div>
+        <div class="cx-status" id="cxStatus">${esc(cxStatusMsg)}</div>
         <div class="cx-controls">
           <button id="cxSubmit" class="btn primary" ${cxSelected.length === 4 ? "" : "disabled"}>Submit</button>
           <button id="cxShuffle" class="btn">🔀 Shuffle</button>
@@ -1761,6 +1763,7 @@ async function submitCxGuess() {
   await loadPlayers(); await loadCxGuesses();
   cxSelected = [];
   if (res && res.result === "correct") {
+    cxStatusMsg = "";
     Music.sting(res.final_group ? "win" : "correct");
     toast(res.final_group ? `+${res.points}! Final group 🎉` : `+${res.points}! ${CX_TIER_EMOJI[res.tier]}`);
   } else if (res && res.result === "already") {
@@ -1771,8 +1774,7 @@ async function submitCxGuess() {
     document.querySelectorAll("#playContent .cx-tile").forEach((t) => {
       if (tried.has(cxOrder[Number(t.dataset.i)])) t.classList.add("shake");
     });
-    const st = $("cxStatus");
-    if (st) st.textContent = res.one_away ? "One away… 👀" : "Not quite — try again.";
+    cxStatusMsg = res.one_away ? "One away… 👀" : "Not quite — try again.";
     if (!res.one_away && !res.locked) toast("Nope — try again.");
     if (res.locked) toast("Locked out for this puzzle 😅");
     ping("guesses");
@@ -1816,6 +1818,7 @@ function initSolo() {
   cxSet(CX_RECENT_KEY, recent);
   const p = CX_PUZZLES[pi];
   solo = { groups: p.groups, order: shuffle(p.groups.flatMap((g) => g.words)), solved: [], mistakes: 0, selected: [], over: false, won: false };
+  soloStatusMsg = "";
   Music.setMode("game");
   show("view-solo");
   renderSolo();
@@ -1839,7 +1842,7 @@ function renderSolo() {
     <p class="q-meta">🔥 Streak: ${streak}</p>
     <div class="cx-solved">${banners}</div>
     <div class="cx-grid">${tiles}</div>
-    <div class="cx-status" id="cxStatus"></div>
+    <div class="cx-status" id="cxStatus">${esc(soloStatusMsg)}</div>
     <div class="cx-controls">
       <button id="soloSubmit" class="btn primary" ${solo.selected.length === 4 ? "" : "disabled"}>Submit</button>
       <button id="soloShuffle" class="btn">🔀 Shuffle</button>
@@ -1871,6 +1874,7 @@ function soloSubmit() {
   solo.selected = [];
   if (hit) {
     solo.solved.push({ tier: hit.tier, name: hit.name, words: hit.words });
+    soloStatusMsg = "";
     if (solo.solved.length === 4) { soloFinish(true); return; }
     Music.sting("correct");
     toast(`+${CX_TIER_POINTS[hit.tier]}! ${CX_TIER_EMOJI[hit.tier]}`);
@@ -1885,8 +1889,7 @@ function soloSubmit() {
   document.querySelectorAll("#soloContent .cx-tile").forEach((t) => {
     if (tried.has(rem[Number(t.dataset.i)])) t.classList.add("shake");
   });
-  const st = $("cxStatus");
-  if (st) st.textContent = oneAway ? "One away… 👀" : "Not quite — try again.";
+  soloStatusMsg = oneAway ? "One away… 👀" : "Not quite — try again.";
   if (solo.mistakes >= 4) { setTimeout(() => soloFinish(false), 700); return; }
   setTimeout(renderSolo, 700);
 }
