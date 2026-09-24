@@ -483,10 +483,19 @@ function renderLobby() {
   $("stageNextBtn").classList.add("hidden");
 }
 
+let wakeLock = null;
+async function holdWake() {
+  try { if ("wakeLock" in navigator) wakeLock = await navigator.wakeLock.request("screen"); } catch {}
+}
+function releaseWake() { try { if (wakeLock) wakeLock.release(); } catch {} wakeLock = null; }
+document.addEventListener("visibilitychange", () => {
+  if (!document.hidden && session?.role === "host" && room && room.status !== "lobby" && room.status !== "game_over") holdWake();
+});
 async function startGame() {
   if (!players.length) { toast("Wait for at least one player to join!"); return; }
   stopLobbyPoll();
   Music.setMode("game");
+  holdWake();
   $("startGameBtn").disabled = true;
   try {
     if (room.game_type === "trivia") await startTrivia();
@@ -635,10 +644,14 @@ function renderHostReveal(c) {
     let s = REVEAL_COUNTDOWN;
     const el = $("revealCount");
     const show = () => { if (el) el.textContent = last ? `Results in ${s}…` : `Next question in ${s}…`; };
+    const advance = async () => {
+      try { await nextTrivia(); }
+      catch (e) { revealFor = null; setTimeout(() => renderHostReveal(c), 2000); } // retry on failure
+    };
     show(); Music.tick(s);
     revealTimer = setInterval(() => {
       s--;
-      if (s <= 0) { clearInterval(revealTimer); revealTimer = null; nextTrivia(); return; }
+      if (s <= 0) { clearInterval(revealTimer); revealTimer = null; advance(); return; }
       show(); Music.tick(s);
     }, 1000);
   }
@@ -661,6 +674,7 @@ function renderHostAnagram(c) {
 
 function renderHostGameOver(c) {
   Music.setMode(null);
+  releaseWake();
   if (winStungFor !== room.id) { winStungFor = room.id; Music.sting("win"); }
   const board = [...players].sort((a, b) => b.score - a.score);
   const winner = board[0];
@@ -985,6 +999,8 @@ async function leaveGame() {
   } catch {}
   if (rtChannel) { try { sb.removeChannel(rtChannel); } catch {} rtChannel = null; }
   rtReady = false; pingQueue.length = 0; stopLobbyPoll();
+  clearInterval(revealTimer); revealTimer = null; revealFor = null;
+  releaseWake();
   session = null; saveSession();
   room = null; players = [];
   $("roomBadge").classList.add("hidden");
