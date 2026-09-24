@@ -656,6 +656,22 @@ function wire() {
   $("joinCodeInput").addEventListener("input", (e) => { e.target.value = e.target.value.toUpperCase().replace(/[^A-Z]/g, ""); });
   $("playerJoinBtn").onclick = joinAsPlayer;
   $("playerNameInput").addEventListener("keydown", (e) => { if (e.key === "Enter") joinAsPlayer(); });
+  $("leaveBtn").onclick = leaveGame;
+}
+
+async function leaveGame() {
+  try {
+    if (session?.player_id) {
+      await api(`game_players?id=eq.${session.player_id}`, { method: "DELETE" });
+      ping("players");
+    }
+  } catch {}
+  if (rtChannel) { try { sb.removeChannel(rtChannel); } catch {} rtChannel = null; }
+  session = null; saveSession();
+  room = null; players = [];
+  $("roomBadge").classList.add("hidden");
+  history.replaceState(null, "", location.pathname);
+  show("view-home");
 }
 
 document.addEventListener("DOMContentLoaded", () => { wire(); initHome(); });
