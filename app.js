@@ -11,6 +11,20 @@ const sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
 
+// QR codes are drawn on-device with a tiny local library — the join URL never
+// leaves the page. Falls back to a free QR image API only if the library fails.
+function makeQr(url) {
+  try {
+    if (typeof qrcode !== "undefined") {
+      const qr = qrcode(0, "M");
+      qr.addData(url);
+      qr.make();
+      return qr.createDataURL(6, 4);
+    }
+  } catch {}
+  return "https://api.qrserver.com/v1/create-qr-code/?size=220x220&data=" + encodeURIComponent(url);
+}
+
 /* ---------------- question packs (2.0-ready) ----------------
    A pack is { id, name, fetchQuestions(opts) -> [{category, question,
    correct_answer, incorrect_answers[]}] }. Family packs slot in here. */
@@ -256,7 +270,7 @@ async function createRoom() {
 function renderLobby() {
   show("view-lobby");
   $("lobbyCode").textContent = room.room_code;
-  $("lobbyQr").src = "https://api.qrserver.com/v1/create-qr-code/?size=220x220&data=" + encodeURIComponent(joinUrl(room.room_code));
+  $("lobbyQr").src = makeQr(joinUrl(room.room_code));
   $("lobbyUrl").textContent = joinUrl(room.room_code);
   $("lobbyCount").textContent = players.length;
   $("lobbyPlayers").innerHTML = players.map((p) => `<li>${esc(p.name)}</li>`).join("") || `<li style="opacity:.6">Waiting for players…</li>`;
