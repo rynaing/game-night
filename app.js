@@ -884,6 +884,11 @@ async function joinWithCode(code) {
       return;
     }
     saveSession();
+    $("joinCodeInput").value = ""; // don't leave the old code sitting in the field
+    try {
+      const prevName = localStorage.getItem("gn_player_name") || "";
+      if (prevName) $("playerNameInput").value = prevName;
+    } catch {}
     $("joinRoomCode").textContent = code;
     show("view-joinname");
     setTimeout(() => $("playerNameInput").focus(), 100);
@@ -911,6 +916,7 @@ async function joinAsPlayer() {
     }
     const [p] = await r.json();
     session.player_id = p.id; session.name = name; saveSession();
+    try { localStorage.setItem("gn_player_name", name); } catch {}
     connectChannel();
     ping("players");
     $("roomBadge").textContent = "🎮 " + session.room_code;
