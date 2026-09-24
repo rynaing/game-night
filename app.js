@@ -11,7 +11,7 @@ const sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
 
-const BUILD = "1790256742"; // deploy.sh replaces this with a timestamp
+const BUILD = "1790257043"; // deploy.sh replaces this with a timestamp
 
 // Stale-tab nudge: each deploy ships a fresh app.js?v= token, but a tab opened
 // before the deploy keeps running old code. Check for a newer build once a
@@ -940,10 +940,12 @@ function renderHostMltVote(c) {
   const prompt = room.questions[room.current_index];
   const n = room.questions.length;
   const voted = new Set(hostVotes.map((v) => v.player_id));
+  const is2p = players.length === 2;
   c.innerHTML = `
-    <p class="q-cat">Most likely to · ${room.current_index + 1}/${n}</p>
+    <p class="q-cat">${is2p ? "Mind meld 🧠" : "Most likely to"} · ${room.current_index + 1}/${n}</p>
     <p class="q-text">${esc(prompt)}</p>
     <p class="q-meta">${voted.size} / ${players.length} voted</p>
+    ${is2p ? `<p class="hint" style="text-align:center">Both players pick the same person to score 🧠</p>` : ""}
     <div class="row center"><button id="mltRevealBtn" class="btn primary big">Reveal →</button></div>`;
   $("stageTimer").classList.add("hidden");
   $("mltRevealBtn").onclick = () => gradeMlt();
@@ -952,21 +954,29 @@ function renderHostMltVote(c) {
 function renderHostMltReveal(c) {
   const prompt = room.questions[room.current_index];
   const last = room.current_index + 1 >= room.questions.length;
+  const is2p = players.length === 2;
   const tally = {};
   hostVotes.forEach((v) => { tally[v.target_id] = (tally[v.target_id] || 0) + 1; });
   const max = Math.max(0, ...Object.values(tally));
+  // 2-player "mind meld": both votes on the same person = both score.
+  // Crowns only make sense in the classic 3+ player vote.
+  const melded = is2p && hostVotes.length === 2 && new Set(hostVotes.map((v) => v.target_id)).size === 1;
   const rows = [...players]
     .sort((a, b) => (tally[b.id] || 0) - (tally[a.id] || 0))
     .map((p) => {
       const votes = tally[p.id] || 0;
-      const crown = votes === max && max > 0;
+      const crown = !is2p && votes === max && max > 0;
       const bar = votes ? "🟣".repeat(Math.min(votes, 12)) : "—";
       return `<tr class="${crown ? "rank-1" : ""}"><td>${crown ? "👑 " : ""}${esc(p.name)}</td><td>${bar} ${votes}</td><td class="pts">${p.score}</td></tr>`;
     }).join("");
+  const banner = is2p
+    ? `<p class="locked">${melded ? "🧠 Mind meld! +100 for both" : hostVotes.length ? "Split decision — no points 😅" : "No votes this round 😅"}</p>`
+    : "";
   c.innerHTML = `
     <div class="reveal-box">
       <p class="q-cat">Most likely to…</p>
       <p class="reveal-answer" style="font-size:1.4rem">${esc(prompt)}</p>
+      ${banner}
       <table class="score-table">${rows}</table>
     </div>`;
   $("stageTimer").classList.add("hidden");
@@ -976,13 +986,17 @@ function renderHostMltReveal(c) {
   nb.onclick = () => nextMlt();
 }
 
+// Standard competition ranking: tied scores share a rank and the next rank
+// skips accordingly (e.g. scores 300, 300, 100 -> ranks 1, 1, 3).
+function compRank(board, p) { return 1 + board.filter((q) => q.score > p.score).length; }
+
 async function renderHostGameOver(c) {
   Music.setMode(null);
   releaseWake();
   if (winStungFor !== room.id) { winStungFor = room.id; Music.sting("win"); }
   const board = [...players].sort((a, b) => b.score - a.score);
   const winner = board[0];
-  const rows = board.map((p, i) => `<tr class="rank-${i + 1}"><td>${esc(p.name)}</td><td class="pts">${p.score}</td></tr>`).join("");
+  const rows = board.map((p) => `<tr class="rank-${compRank(board, p)}"><td>${esc(p.name)}</td><td class="pts">${p.score}</td></tr>`).join("");
   let wordsHTML = "";
   if (room.game_type === "anagram") {
     await loadWords(); // fresh snapshot for the breakdown
@@ -1448,27 +1462,31 @@ async function renderPlayerMltVote(c) {
   $("playTimer").classList.add("hidden");
   await loadMltVotes();
   const prompt = room.questions[room.current_index];
-  const others = players.filter((p) => p.id !== session.player_id);
+  // 2-player "mind meld": voting for yourself is allowed and is the whole
+  // point, so both names are shown. 3+ players keep the classic no-self-vote.
+  const is2p = players.length === 2;
+  const targets = is2p ? players : players.filter((p) => p.id !== session.player_id);
   if (myVote) {
     const t = players.find((p) => p.id === myVote.target_id);
-    c.innerHTML = `<p class="q-cat">Most likely to…</p><p class="q-text" style="font-size:1.3rem">${esc(prompt)}</p>
+    c.innerHTML = `<p class="q-cat">${is2p ? "Mind meld 🧠" : "Most likely to…"}</p><p class="q-text" style="font-size:1.3rem">${esc(prompt)}</p>
       <p class="locked">Voted for ${esc(t?.name || "…")}! 🗳️</p>
       <p class="hint" style="text-align:center">Waiting for everyone…</p>`;
     return;
   }
-  if (!others.length) {
-    c.innerHTML = `<p class="q-cat">Most likely to…</p><p class="q-text" style="font-size:1.3rem">${esc(prompt)}</p>
+  if (!targets.length) {
+    c.innerHTML = `<p class="q-cat">${is2p ? "Mind meld 🧠" : "Most likely to…"}</p><p class="q-text" style="font-size:1.3rem">${esc(prompt)}</p>
       <p class="hint" style="text-align:center">Waiting for more players to join…</p>`;
     return;
   }
-  c.innerHTML = `<p class="q-cat">Most likely to…</p><p class="q-text" style="font-size:1.3rem">${esc(prompt)}</p>
-    <div class="answer-grid">${others.map((p) => `<button class="answer-btn" data-p="${p.id}">🗳️ ${esc(p.name)}</button>`).join("")}</div>`;
+  c.innerHTML = `<p class="q-cat">${is2p ? "Mind meld 🧠" : "Most likely to…"}</p><p class="q-text" style="font-size:1.3rem">${esc(prompt)}</p>
+    ${is2p ? `<p class="hint" style="text-align:center">Pick who fits — voting for yourself is fair game.<br/>Match your partner's pick to score!</p>` : ""}
+    <div class="answer-grid">${targets.map((p) => `<button class="answer-btn" data-p="${p.id}">🗳️ ${esc(p.name)}</button>`).join("")}</div>`;
   c.querySelectorAll(".answer-btn").forEach((b) => {
     b.onclick = async () => {
       b.disabled = true;
       c.querySelectorAll(".answer-btn").forEach((x) => { x.disabled = true; if (x === b) x.classList.add("picked"); });
-      // Server is authoritative: the submit_vote RPC rejects self-votes,
-      // double votes, and votes after the round closed.
+      // Server is authoritative: the submit_vote RPC rejects self-votes in
+      // 3+ player rooms, double votes, and votes after the round closed.
       let ok = false;
       try {
         const [res] = await rpc("submit_vote", { p_room: session.room_id, p_player: session.player_id, p_target: b.dataset.p });
@@ -1486,21 +1504,26 @@ async function renderPlayerMltReveal(c) {
   $("playTimer").classList.add("hidden");
   await loadMltVotes();
   const prompt = room.questions[room.current_index];
+  const is2p = players.length === 2;
   const tally = {};
   hostVotes.forEach((v) => { tally[v.target_id] = (tally[v.target_id] || 0) + 1; });
   const max = Math.max(0, ...Object.values(tally));
-  const crowned = max > 0 && (tally[session.player_id] || 0) === max;
+  const melded = is2p && hostVotes.length === 2 && new Set(hostVotes.map((v) => v.target_id)).size === 1;
+  const crowned = !is2p && max > 0 && (tally[session.player_id] || 0) === max;
   const rows = [...players]
     .sort((a, b) => (tally[b.id] || 0) - (tally[a.id] || 0))
     .map((p) => {
       const votes = tally[p.id] || 0;
-      const crown = votes === max && max > 0;
+      const crown = !is2p && votes === max && max > 0;
       return `<tr class="${crown ? "rank-1" : ""}${p.id === session.player_id ? " me" : ""}"><td>${crown ? "👑 " : ""}${esc(p.name)}</td><td>${votes} vote${votes === 1 ? "" : "s"}</td><td class="pts">${p.score}</td></tr>`;
     }).join("");
+  const verdict = is2p
+    ? melded ? "🧠 Mind meld! +100" : hostVotes.length ? "Split decision — no points 😅" : "No votes this round 😅"
+    : crowned ? "👑 That's you! +100" : max > 0 ? "The people have spoken! 🗳️" : "No votes this round 😅";
   c.innerHTML = `<div class="reveal-box">
-      <p class="q-cat">Most likely to…</p>
+      <p class="q-cat">${is2p ? "Mind meld 🧠" : "Most likely to…"}</p>
       <p class="reveal-answer" style="font-size:1.4rem">${esc(prompt)}</p>
-      <p class="locked">${crowned ? "👑 That's you! +100" : max > 0 ? "The people have spoken! 🗳️" : "No votes this round 😅"}</p>
+      <p class="locked">${verdict}</p>
       <table class="score-table">${rows}</table>
     </div>`;
 }
@@ -1508,9 +1531,10 @@ async function renderPlayerMltReveal(c) {
 async function renderPlayerGameOver(c) {
   $("playTimer").classList.add("hidden");
   const board = [...players].sort((a, b) => b.score - a.score);
-  const rank = board.findIndex((p) => p.id === session.player_id) + 1;
-  const rows = board.map((p, i) =>
-    `<tr class="rank-${i + 1}${p.id === session.player_id ? " me" : ""}"><td>${esc(p.name)}</td><td class="pts">${p.score}</td></tr>`).join("");
+  const me = board.find((p) => p.id === session.player_id);
+  const rank = me ? compRank(board, me) : board.length;
+  const rows = board.map((p) =>
+    `<tr class="rank-${compRank(board, p)}${p.id === session.player_id ? " me" : ""}"><td>${esc(p.name)}</td><td class="pts">${p.score}</td></tr>`).join("");
   let wordsHTML = "";
   if (room.game_type === "anagram") {
     const mine = allWords.filter((w) => w.player_id === session.player_id);
