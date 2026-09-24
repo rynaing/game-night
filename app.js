@@ -739,17 +739,29 @@ function renderHostAnagram(c) {
   $("stageTimer").classList.remove("hidden");
 }
 
-function renderHostGameOver(c) {
+async function renderHostGameOver(c) {
   Music.setMode(null);
   releaseWake();
   if (winStungFor !== room.id) { winStungFor = room.id; Music.sting("win"); }
   const board = [...players].sort((a, b) => b.score - a.score);
   const winner = board[0];
   const rows = board.map((p, i) => `<tr class="rank-${i + 1}"><td>${esc(p.name)}</td><td class="pts">${p.score}</td></tr>`).join("");
+  let wordsHTML = "";
+  if (room.game_type === "anagram") {
+    await loadWords(); // fresh snapshot for the breakdown
+    const groups = board.map((p) => {
+      const ws = allWords.filter((w) => w.player_id === p.id);
+      if (!ws.length) return "";
+      const chips = ws.map((w) => `<span class="word-chip">${esc(w.word)}<small>+${w.points}</small></span>`).join("");
+      return `<div class="words-group"><p class="words-name">${esc(p.name)} <small style="color:var(--muted)">(${ws.length})</small></p><div class="word-list">${chips}</div></div>`;
+    }).join("");
+    wordsHTML = `<h3 class="words-title">Words found</h3>${groups || `<p class="hint" style="text-align:center">No words this time.</p>`}`;
+  }
   c.innerHTML = `
     <p class="q-cat">Game over</p>
     <p class="winner">🏆 ${esc(winner?.name || "—")}</p>
-    <table class="score-table">${rows}</table>`;
+    <table class="score-table">${rows}</table>
+    ${wordsHTML}`;
   $("stageTimer").classList.add("hidden");
   const nb = $("stageNextBtn");
   nb.classList.remove("hidden");
@@ -1138,10 +1150,16 @@ function renderPlayerGameOver(c) {
   const rank = board.findIndex((p) => p.id === session.player_id) + 1;
   const rows = board.map((p, i) =>
     `<tr class="rank-${i + 1}${p.id === session.player_id ? " me" : ""}"><td>${esc(p.name)}</td><td class="pts">${p.score}</td></tr>`).join("");
+  let wordsHTML = "";
+  if (room.game_type === "anagram") {
+    const mine = allWords.filter((w) => w.player_id === session.player_id);
+    if (mine.length) wordsHTML = `<h3 class="words-title">Your words</h3><div class="word-list" style="justify-content:center">${mine.map((w) => `<span class="word-chip">${esc(w.word)}<small>+${w.points}</small></span>`).join("")}</div>`;
+  }
   c.innerHTML = `
     <p class="q-cat">Game over</p>
     <p class="winner" style="font-size:2rem">${rank === 1 ? "🏆 You won!" : `You placed #${rank}`}</p>
     <table class="score-table">${rows}</table>
+    ${wordsHTML}
     <p class="hint" style="text-align:center">Waiting for the host to start the next game… 🎮</p>`;
 }
 
