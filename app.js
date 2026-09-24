@@ -11,7 +11,7 @@ const sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
 
-const BUILD = "1790225266"; // deploy.sh replaces this with a timestamp
+const BUILD = "1790227345"; // deploy.sh replaces this with a timestamp
 
 // Stale-tab nudge: each deploy ships a fresh app.js?v= token, but a tab opened
 // before the deploy keeps running old code. Check for a newer build once a
@@ -251,6 +251,16 @@ async function showBoard() {
     ).join("") + `</table>`;
   } catch { list.innerHTML = `<p class="hint">Couldn't load the leaderboard. Try again.</p>`; }
 }
+// Wipes every past game (rooms cascade to players/answers/words), clearing
+// test data from the all-time leaderboard. Destructive by design: confirm().
+async function resetLeaderboard() {
+  if (!confirm("Reset the all-time leaderboard? This erases every past game.")) return;
+  try {
+    await rpc("reset_leaderboard", {});
+    toast("Leaderboard cleared.");
+    if (!$("view-board").classList.contains("hidden")) showBoard();
+  } catch { toast("Couldn't reset the leaderboard."); }
+}
 function toast(msg, ms = 2600) {
   const t = $("toast");
   t.textContent = msg;
@@ -355,6 +365,8 @@ async function loadWords() {
 }
 let hostAnswers = [];
 let revealTimer = null, revealFor = null; // auto-advance countdown state
+let playerPoll = null;  // player 3s safety-net poller (fix: leaked on rejoin)
+let hostBeat = null;    // host heartbeat interval (fix: host-disconnect detection)
 const REVEAL_COUNTDOWN = 5;
 async function loadMyAnswer() {
   const r = await api(`game_answers?player_id=eq.${session.player_id}&question_index=eq.${room.current_index}&select=*`);
@@ -417,7 +429,7 @@ async function fetchCat(category, difficulty, amount) {
   if (category) q.set("category", category);
   if (difficulty) q.set("difficulty", difficulty);
   let data = await (await fetch("https://opentdb.com/api.php?" + q)).json();
-  if (data.response_code === 4) { // token empty -> reset and retry once
+  if (data.response_code === 4 || data.response_code === 3) { // token empty / not found -> reset and retry once
     await fetch(`https://opentdb.com/api_token.php?command=reset&token=${token}`);
     data = await (await fetch("https://opentdb.com/api.php?" + q)).json();
   }
@@ -441,7 +453,7 @@ const LETTER_BAG = "EEEEEEEEEEEEAAAAAAAAAIIIIIIIIIOOOOOOOONNNNNNRRRRRRTTTTTTLLLL
 // Every valid dictionary word formable from the tiles that nobody found.
 let missedCacheKey = "", missedCache = null;
 async function computeMissedWords() {
-  const key = room ? room.id + "|" + (room.anagram_letters || "") : "";
+  const key = room ? room.id + "|" + (room.anagram_letters || "") + "|" + (room.round_ends_at || "") : "";
   if (key && key === missedCacheKey) return missedCache;
   await loadWords_dict();
   const tiles = (room && room.anagram_letters) || "";
@@ -528,6 +540,7 @@ async function resumeHost() {
   $("roomBadge").classList.remove("hidden");
   if (room.status === "lobby") { renderLobby(); startLobbyPoll(); } else renderStage();
   startTick();
+  startHostBeat();
 }
 
 function initSetup() {
@@ -608,6 +621,7 @@ async function startGame() {
   Music.setMode("game");
   holdWake();
   winStungFor = null;
+  startHostBeat();
   $("startGameBtn").disabled = true;
   try {
     if (room.game_type === "trivia") await startTrivia();
@@ -714,7 +728,7 @@ function renderStage() {
   const eb = $("stageEndBtn");
   eb.classList.remove("hidden");
   eb.textContent = "End game";
-  eb.onclick = async () => { await updateRoom({ status: "game_over" }); renderStage(); };
+  eb.onclick = async () => { clearInterval(revealTimer); revealTimer = null; await updateRoom({ status: "game_over" }); renderStage(); };
   const c = $("stageContent");
   if (room.status === "question") renderHostQuestion(c);
   else if (room.status === "reveal") renderHostReveal(c);
@@ -760,8 +774,9 @@ function renderHostReveal(c) {
     revealFor = rk;
     clearInterval(revealTimer);
     let s = REVEAL_COUNTDOWN;
-    const el = $("revealCount");
-    const show = () => { if (el) el.textContent = last ? `Results in ${s}…` : `Next question in ${s}…`; };
+    // Re-query #revealCount every tick: a re-render (e.g. from a scores
+    // broadcast) detaches the old node, freezing the visible countdown.
+    const show = () => { const el = $("revealCount"); if (el) el.textContent = last ? `Results in ${s}…` : `Next question in ${s}…`; };
     const advance = async () => {
       try { await nextTrivia(); }
       catch (e) { revealFor = null; setTimeout(() => renderHostReveal(c), 2000); } // retry on failure
@@ -925,13 +940,38 @@ function startTick() {
         el.classList.toggle("low", s <= 5);
       }
     }
-    if (ms <= 0 && session.role === "host" && !tickTimer._fired) {
-      tickTimer._fired = true;
+    // Double-fire is already prevented by the `grading` re-entry guard plus the
+    // status transitions below (gradeTrivia flips status to "reveal", the
+    // anagram branch flips to "game_over").
+    if (ms <= 0 && session.role === "host") {
       if (room.status === "question") await gradeTrivia();
       else if (room.status === "anagram_play") { await updateRoom({ status: "game_over" }); renderStage(); }
-      tickTimer._fired = false;
     }
   }, 250);
+}
+
+/* ---------------- host disconnect detection ---------------- */
+// The host beats host_seen_at every 5s while a game is live. If a player's
+// poll sees it go stale, the host tab died (closed / slept / lost network).
+// Recovery is deliberately manual: the overlay tells players to reopen the
+// host tab, whose resume path self-heals. (A player-side "take over" was
+// rejected: two live hosts could both run gradeTrivia and double-award.)
+function beatHost() {
+  if (session?.role !== "host" || !room || room.status === "lobby" || room.status === "game_over") return;
+  // Fire-and-forget: no ping(), so this never triggers a re-render churn.
+  api(`game_rooms?id=eq.${session.room_id}`, { method: "PATCH", body: JSON.stringify({ host_seen_at: new Date().toISOString() }) }).catch(() => {});
+}
+function startHostBeat() {
+  beatHost();
+  clearInterval(hostBeat);
+  hostBeat = setInterval(beatHost, 5000);
+}
+function checkHostAlive() {
+  const overlay = $("hostLostOverlay");
+  if (!overlay) return;
+  const active = room && ["question", "reveal", "anagram_play"].includes(room.status);
+  const stale = active && room.host_seen_at && (Date.now() - new Date(room.host_seen_at).getTime() > 10000);
+  overlay.classList.toggle("hidden", !stale);
 }
 
 /* ============================================================
@@ -993,7 +1033,8 @@ async function joinAsPlayer() {
     await loadRoom(); await loadPlayers(); await loadWords();
     render();
     // safety net: refetch room state every 3s in case a broadcast is missed
-    setInterval(async () => { if (session?.role === "player") { await loadRoom(); await loadPlayers(); render(); } }, 3000);
+    clearInterval(playerPoll);
+    playerPoll = setInterval(async () => { if (session?.role === "player") { await loadRoom(); await loadPlayers(); checkHostAlive(); render(); } }, 3000);
   } catch {
     err.textContent = "Couldn't join. Try again.";
     err.classList.remove("hidden");
@@ -1010,7 +1051,8 @@ async function resumePlayer() {
   $("roomBadge").classList.remove("hidden");
   $("meName").textContent = session.name || "";
   render();
-  setInterval(async () => { if (session?.role === "player") { await loadRoom(); await loadPlayers(); render(); } }, 3000);
+  clearInterval(playerPoll);
+  playerPoll = setInterval(async () => { if (session?.role === "player") { await loadRoom(); await loadPlayers(); checkHostAlive(); render(); } }, 3000);
 }
 
 /* ---------------- player rendering ---------------- */
@@ -1042,6 +1084,9 @@ function render() {
   const me = players.find((p) => p.id === session.player_id);
   if (me) $("meScore").textContent = me.score;
   if (!room) return;
+  // A live round means a (re)started game: re-arm the win fanfare so players
+  // hear it at every game-over, not just the first one in the room.
+  if (room.status === "question" || room.status === "anagram_play") winStungFor = null;
   if (room.status === "lobby") Music.setMode("lobby");
   else if (room.status === "game_over") { Music.setMode(null); if (winStungFor !== room.id) { winStungFor = room.id; Music.sting("win"); } }
   else Music.setMode("game");
@@ -1171,7 +1216,8 @@ function renderPlayerAnagram(c) {
         [els[i], els[j]] = [els[j], els[i]];
       }
       els.forEach((t) => cont.appendChild(t));
-      Music.sting("click");
+      // NB: no explicit sting here — the global .btn click handler already
+      // plays one, and doubling it was the reported bug.
     };
     renderBuilt();
   }
@@ -1194,31 +1240,23 @@ async function submitWord(word) {
   if (!canForm(word, room.anagram_letters)) { toast("Use only the letters shown!"); clearBuilt(); return; }
   await loadWords_dict();
   if (!WORDS.has(word)) { toast(`"${word}" isn't in the Scrabble dictionary.`); Music.sting("wrong"); clearBuilt(); return; }
-  await loadWords(); // fresh snapshot so duplicate detection sees everyone's words
-  const mode = repeatMode();
+  await loadWords(); // fresh snapshot for the friendly "already found by X" message
   const found = allWords.find((w) => w.word === word);
   if (found && found.player_id === session.player_id) {
     toast(`You already found "${word}".`); Music.sting("wrong"); clearBuilt(); return;
   }
-  if (found && mode === "off") {
-    toast(`"${word}" was already found by ${found.game_players?.name || "someone"}!`);
-    Music.sting("wrong");
-    clearBuilt();
-    return;
-  }
-  let pts = anagramPoints(word.length);
-  if (found && mode === "half") pts = Math.floor(pts / 2); // repeat word: half points
-  const r = await api("game_words", {
-    method: "POST",
-    headers: { Prefer: "return=representation" },
-    body: JSON.stringify({ room_id: session.room_id, player_id: session.player_id, word, points: pts }),
-  });
-  if (!r.ok) { toast("Someone beat you to it, or try again."); clearBuilt(); return; }
-  const me = players.find((p) => p.id === session.player_id);
-  let newScore = me ? me.score : 0;
-  if (me) {
-    try { newScore = await rpc("add_score", { p_player_id: me.id, p_points: pts }); }
-    catch { newScore = me.score + pts; }
+  // Server is authoritative: the submit_word RPC atomically verifies the round
+  // is live, enforces the repeat-words policy across ALL players, inserts the
+  // word, and adds the score. This closes the same-word race (two phones
+  // submitting within milliseconds) and rejects submits after the round ends.
+  let res = null;
+  try { [res] = await rpc("submit_word", { p_room: session.room_id, p_player: session.player_id, p_word: word }); }
+  catch { res = null; }
+  if (!res || !res.accepted) {
+    if (res && res.note === "round_over") toast("Round's over!");
+    else if (found) toast(`"${word}" was already found by ${found.game_players?.name || "someone"}!`);
+    else toast("Someone beat you to it, or try again.");
+    Music.sting("wrong"); clearBuilt(); return;
   }
   await loadPlayers(); await loadWords();
   ping("words"); ping("scores");
@@ -1226,7 +1264,7 @@ async function submitWord(word) {
   if (clearAnagramBuilt) clearAnagramBuilt(); // reset the tap-to-spell word
   const me2 = players.find((p) => p.id === session.player_id);
   if (me2) $("meScore").textContent = me2.score;
-  toast(found ? `+${pts} (repeat!) — nice!` : `+${pts} — nice!`, 1200); Music.sting("pop");
+  toast(res.note === "repeat" ? `+${res.points} (repeat!) — nice!` : `+${res.points} — nice!`, 1200); Music.sting("pop");
 }
 
 async function renderPlayerGameOver(c) {
@@ -1255,13 +1293,14 @@ async function renderPlayerGameOver(c) {
 function wire() {
   $("hostBtn").onclick = initSetup;
   $("boardBtn").onclick = showBoard;
+  $("resetBoardBtn").onclick = resetLeaderboard;
   $("boardBackBtn").onclick = () => show("view-home");
   $("backHomeBtn").onclick = () => { if (editingRoom) cancelRematchEdit(); else initHome(); };
   $("createRoomBtn").onclick = () => { if (editingRoom) { if (editingReturn === "lobby") applyLobbySettings(); else startRematch(); } else createRoom(); };
   $("lobbyBackBtn").onclick = () => { stopLobbyPoll(); initHome(); };
   $("lobbySettingsBtn").onclick = openLobbySettings;
   $("startGameBtn").onclick = startGame;
-  $("stageEndBtn").onclick = async () => { await updateRoom({ status: "game_over" }); renderStage(); };
+  $("stageEndBtn").onclick = async () => { clearInterval(revealTimer); revealTimer = null; await updateRoom({ status: "game_over" }); renderStage(); };
   const goJoin = () => joinWithCode($("joinCodeInput").value);
   $("joinGoBtn").onclick = goJoin;
   $("joinCodeInput").addEventListener("keydown", (e) => { if (e.key === "Enter") goJoin(); });
@@ -1295,6 +1334,9 @@ async function leaveGame() {
   if (rtChannel) { try { sb.removeChannel(rtChannel); } catch {} rtChannel = null; }
   rtReady = false; pingQueue.length = 0; stopLobbyPoll();
   clearInterval(revealTimer); revealTimer = null; revealFor = null;
+  clearInterval(tickTimer); tickTimer = null;
+  clearInterval(playerPoll); playerPoll = null;
+  clearInterval(hostBeat); hostBeat = null;
   releaseWake();
   session = null; saveSession();
   room = null; players = [];
