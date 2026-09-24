@@ -11,7 +11,7 @@ const sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
 
-const BUILD = "1790223425"; // deploy.sh replaces this with a timestamp
+const BUILD = "1790223589"; // deploy.sh replaces this with a timestamp
 
 // Stale-tab nudge: each deploy ships a fresh app.js?v= token, but a tab opened
 // before the deploy keeps running old code. Check for a newer build once a
@@ -458,8 +458,6 @@ const missedWordsHTML = (missed) =>
   (missed.length
     ? `<div class="word-list missed-list">${missed.map((w) => `<span class="word-chip missed">${esc(w)}</span>`).join("")}</div>`
     : `<p class="hint" style="text-align:center">None — you found them all! 🎉</p>`);
-const ANAGRAM_TARGET = 1500; // default par score for each anagram round
-const anagramTarget = () => (room && room.settings && room.settings.target) || ANAGRAM_TARGET;
 const anagramMinLen = () => (room && room.settings && room.settings.min_len) || 3;
 // "off" | "full" | "half" — legacy boolean true means "full"
 const repeatMode = () => {
@@ -786,7 +784,7 @@ function renderHostAnagram(c) {
   // give answers away to everyone watching the host screen. Full breakdown
   // appears on the game-over screen instead.
   c.innerHTML = `
-    <p class="q-cat">Make words · ${anagramMinLen()}+ letters · 🎯 ${anagramTarget().toLocaleString()} target</p>
+    <p class="q-cat">Make words · ${anagramMinLen()}+ letters</p>
     <div class="letters">${tiles}</div>
     <table class="score-table">${board}</table>
     <p class="word-feed">${allWords.length} word${allWords.length === 1 ? "" : "s"} found so far…</p>`;
@@ -856,7 +854,6 @@ function prefillSetupFromRoom() {
     $("selSeconds").value = String(s.seconds || 60);
     $("selLetters").value = String(s.letters || 6);
     $("selMinLen").value = String(s.min_len || 3);
-    $("selTarget").value = String(s.target || 1500);
     const ar = s.allow_repeats;
     $("selRepeats").value = (ar === true || ar === "full") ? "full" : ar === "half" ? "half" : "off";
   }
@@ -888,7 +885,7 @@ function cancelRematchEdit() {
 function gatherSettings() {
   return pickedGame === "trivia"
     ? { categories: [...selectedCats], difficulty: $("selDifficulty").value || null, count: parseInt($("selCount").value, 10), auto_advance: $("chkAutoAdvance").checked }
-    : { seconds: parseInt($("selSeconds").value, 10), letters: parseInt($("selLetters").value, 10), min_len: parseInt($("selMinLen").value, 10), target: parseInt($("selTarget").value, 10), allow_repeats: $("selRepeats").value };
+    : { seconds: parseInt($("selSeconds").value, 10), letters: parseInt($("selLetters").value, 10), min_len: parseInt($("selMinLen").value, 10), allow_repeats: $("selRepeats").value };
 }
 async function startRematch() {
   const errBox = $("setupError");
@@ -1120,7 +1117,7 @@ function renderPlayerAnagram(c) {
   if (!c.dataset.anagramRound || c.dataset.anagramRound !== roundKey) {
     const tiles = room.anagram_letters.split("").map((ch) => `<button type="button" class="tile" data-ch="${ch}">${ch}</button>`).join("");
     c.innerHTML = `
-      <p class="q-cat">Make words · ${anagramMinLen()}+ letters · 🎯 ${anagramTarget().toLocaleString()} target</p>
+      <p class="q-cat">Make words · ${anagramMinLen()}+ letters</p>
       <div class="letters">${tiles}</div>
       <div class="build-word" id="buildWord"></div>
       <div class="word-row">
@@ -1218,15 +1215,13 @@ async function submitWord(word) {
     try { newScore = await rpc("add_score", { p_player_id: me.id, p_points: pts }); }
     catch { newScore = me.score + pts; }
   }
-  const crossed = me && me.score < anagramTarget() && newScore >= anagramTarget();
   await loadPlayers(); await loadWords();
   ping("words"); ping("scores");
   refreshChips();
   if (clearAnagramBuilt) clearAnagramBuilt(); // reset the tap-to-spell word
   const me2 = players.find((p) => p.id === session.player_id);
   if (me2) $("meScore").textContent = me2.score;
-  if (crossed) { toast(`🎯 ${anagramTarget().toLocaleString()} target smashed!`, 2000); Music.sting("win"); }
-  else { toast(found ? `+${pts} (repeat!) — nice!` : `+${pts} — nice!`, 1200); Music.sting("pop"); }
+  toast(found ? `+${pts} (repeat!) — nice!` : `+${pts} — nice!`, 1200); Music.sting("pop");
 }
 
 async function renderPlayerGameOver(c) {
