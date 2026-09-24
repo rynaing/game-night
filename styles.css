@@ -154,6 +154,16 @@ input:focus, select:focus { outline: 2px solid var(--accent); border-color: var(
   background: linear-gradient(160deg, #f5d76e, #d4a017); color: #3a2c00;
   border-radius: 10px; box-shadow: 0 4px 0 #8a6a10;
 }
+button.tile { font: inherit; cursor: pointer; border: 0; touch-action: manipulation; transition: opacity 0.12s, transform 0.12s; }
+button.tile.used { opacity: 0.25; transform: scale(0.92); box-shadow: 0 2px 0 #8a6a10; }
+.build-row { display: flex; gap: 0.6rem; max-width: 480px; margin: 0 auto; align-items: stretch; }
+.build-word {
+  flex: 1; min-height: 3.4rem; display: flex; align-items: center; justify-content: center;
+  gap: 0.35rem; flex-wrap: wrap; background: var(--card);
+  border: 2px dashed #4a4370; border-radius: var(--radius); padding: 0.4rem 0.6rem;
+}
+.build-hint { color: var(--muted); font-size: 0.8rem; letter-spacing: 0.2em; }
+.btile { font-size: 1.5rem; font-weight: 800; background: #1c2a4a; border-radius: 8px; padding: 0.1rem 0.55rem; }
 .word-row { display: flex; gap: 0.6rem; max-width: 480px; margin: 0 auto; }
 .word-row input { text-transform: uppercase; font-weight: 800; letter-spacing: 0.15em; text-align: center; }
 .word-list { display: flex; flex-wrap: wrap; gap: 0.4rem; justify-content: center; margin-top: 1rem; max-width: 560px; margin-left: auto; margin-right: auto; }
