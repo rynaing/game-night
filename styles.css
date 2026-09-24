@@ -126,6 +126,9 @@ input:focus, select:focus { outline: 2px solid var(--accent); border-color: var(
 .score-table tr.me td { color: var(--accent2); font-weight: 800; }
 .score-table td.pts { text-align: right; font-variant-numeric: tabular-nums; font-weight: 700; }
 .ans-pick { font-size: 0.85rem; color: var(--muted); font-weight: 400; margin-top: 0.15rem; }
+.my-answer { text-align: center; background: var(--card); border-radius: 12px;
+  padding: 0.9rem 1rem; margin: 1rem auto; max-width: 420px; color: var(--muted); }
+.my-answer strong { color: var(--text); font-size: 1.15rem; }
 .rank-1 td:first-child::before { content: "🥇 "; }
 .rank-2 td:first-child::before { content: "🥈 "; }
 .rank-3 td:first-child::before { content: "🥉 "; }
