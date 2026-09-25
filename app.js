@@ -11,7 +11,7 @@ const sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
 
-const BUILD = "1790322305"; // deploy.sh replaces this with a timestamp
+const BUILD = "1790322522"; // deploy.sh replaces this with a timestamp
 
 // Stale-tab nudge: each deploy ships a fresh app.js?v= token, but a tab opened
 // before the deploy keeps running old code. Check for a newer build once a
@@ -515,12 +515,15 @@ async function fetchCat(category, difficulty, amount) {
     }
     return data;
   };
-  // Graceful degradation for code 1 (not enough questions for the combo):
-  // fewer questions -> drop difficulty -> fewer without difficulty.
   let data = await tryOnce(category, difficulty, amount);
-  if (data.response_code === 1 && amount > 5) data = await tryOnce(category, difficulty, Math.max(5, Math.floor(amount / 2)));
-  if (data.response_code === 1 && difficulty) data = await tryOnce(category, null, amount);
-  if (data.response_code === 1 && (difficulty || amount > 5)) data = await tryOnce(category, null, Math.max(5, Math.floor(amount / 2)));
+  // Graceful degradation for thin pools: code 1 = not enough questions for the
+  // combo; code 3/4 persisting after a token reset = the pool is exhausted for
+  // this query (OpenTDB returns 4 instead of 1 for some thin categories).
+  // Fewer questions -> drop difficulty -> fewer without difficulty.
+  const exhausted = () => data.response_code === 1 || data.response_code === 3 || data.response_code === 4;
+  if (exhausted() && amount > 5) data = await tryOnce(category, difficulty, Math.max(5, Math.floor(amount / 2)));
+  if (exhausted() && difficulty) data = await tryOnce(category, null, amount);
+  if (exhausted() && (difficulty || amount > 5)) data = await tryOnce(category, null, Math.max(5, Math.floor(amount / 2)));
   if (data.response_code !== 0 || !data.results?.length) throw new Error("No questions available for those settings — try different ones.");
   return data.results.map((r) => ({
     category: dec(r.category),
