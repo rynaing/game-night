@@ -11,7 +11,7 @@ const sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
 
-const BUILD = "1790263523"; // deploy.sh replaces this with a timestamp
+const BUILD = "1790321853"; // deploy.sh replaces this with a timestamp
 
 // Stale-tab nudge: each deploy ships a fresh app.js?v= token, but a tab opened
 // before the deploy keeps running old code. Check for a newer build once a
@@ -1596,9 +1596,13 @@ async function renderPlayerGameOver(c) {
     <p class="winner" style="font-size:2rem">${rank === 1 ? "🏆 You won!" : `You placed #${rank}`}</p>
     <table class="score-table">${rows}</table>
     ${wordsHTML}
-    <p class="hint" style="text-align:center">Waiting for the host to start the next game… 🎮</p>`;
+    <div class="row center" style="display:flex;justify-content:center;margin-top:14px">
+      <button id="playerRematchBtn" class="btn primary">⚙️ Rematch settings</button>
+    </div>
+    <p class="hint" style="text-align:center">Tweak the settings and start a rematch — or wait for the host 🎮</p>`;
   const cb = $("cxCopyBtn");
   if (cb) cb.onclick = () => cxCopy(cxShareCache, cb);
+  $("playerRematchBtn").onclick = openRematchSettings;
 }
 
 /* ============================================================
