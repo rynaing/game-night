@@ -11,7 +11,7 @@ const sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
 
-const BUILD = "1790321930"; // deploy.sh replaces this with a timestamp
+const BUILD = "1790322305"; // deploy.sh replaces this with a timestamp
 
 // Stale-tab nudge: each deploy ships a fresh app.js?v= token, but a tab opened
 // before the deploy keeps running old code. Check for a newer build once a
@@ -439,11 +439,25 @@ async function loadMyAnswer() {
 }
 
 /* ---------------- Open Trivia DB pack ---------------- */
+// OpenTDB enforces 1 request per 5s per IP (code 5 otherwise). Serialize every
+// call through this queue with 5.5s spacing so parallel category fetches,
+// token requests, and rapid restarts never trip the limit.
+let otdbLastCall = 0, otdbQueue = Promise.resolve();
+function otdbFetch(url) {
+  const run = otdbQueue.then(async () => {
+    const wait = Math.max(0, 5500 - (Date.now() - otdbLastCall));
+    if (wait) await new Promise((r) => setTimeout(r, wait));
+    otdbLastCall = Date.now();
+    return (await fetch(url)).json();
+  });
+  otdbQueue = run.catch(() => {}); // keep the chain alive after failures
+  return run;
+}
 async function otdbToken() {
   let t = localStorage.getItem("otdb_token");
   if (!t) {
-    const r = await fetch("https://opentdb.com/api_token.php?command=request");
-    t = (await r.json()).token;
+    const data = await otdbFetch("https://opentdb.com/api_token.php?command=request");
+    t = data.token;
     localStorage.setItem("otdb_token", t);
   }
   return t;
@@ -451,8 +465,8 @@ async function otdbToken() {
 let selectedCats = []; // up to 3 OpenTDB category ids; empty = all categories
 async function loadCategories() {
   try {
-    const r = await fetch("https://opentdb.com/api_category.php");
-    otdbCategories = (await r.json()).trivia_categories || [];
+    const data = await otdbFetch("https://opentdb.com/api_category.php");
+    otdbCategories = data.trivia_categories || [];
     const box = $("catChips");
     box.innerHTML = "";
     otdbCategories.forEach((c) => {
@@ -490,14 +504,23 @@ async function fetchOpenTDBQuestions({ categories, category, difficulty, amount 
 }
 async function fetchCat(category, difficulty, amount) {
   const token = await otdbToken();
-  const q = new URLSearchParams({ amount: String(amount), type: "multiple", encode: "url3986", token });
-  if (category) q.set("category", category);
-  if (difficulty) q.set("difficulty", difficulty);
-  let data = await (await fetch("https://opentdb.com/api.php?" + q)).json();
-  if (data.response_code === 4 || data.response_code === 3) { // token empty / not found -> reset and retry once
-    await fetch(`https://opentdb.com/api_token.php?command=reset&token=${token}`);
-    data = await (await fetch("https://opentdb.com/api.php?" + q)).json();
-  }
+  const tryOnce = async (cat, diff, amt) => {
+    const q = new URLSearchParams({ amount: String(amt), type: "multiple", encode: "url3986", token });
+    if (cat) q.set("category", cat);
+    if (diff) q.set("difficulty", diff);
+    let data = await otdbFetch("https://opentdb.com/api.php?" + q);
+    if (data.response_code === 4 || data.response_code === 3) { // token empty / not found -> reset and retry once
+      await otdbFetch(`https://opentdb.com/api_token.php?command=reset&token=${token}`);
+      data = await otdbFetch("https://opentdb.com/api.php?" + q);
+    }
+    return data;
+  };
+  // Graceful degradation for code 1 (not enough questions for the combo):
+  // fewer questions -> drop difficulty -> fewer without difficulty.
+  let data = await tryOnce(category, difficulty, amount);
+  if (data.response_code === 1 && amount > 5) data = await tryOnce(category, difficulty, Math.max(5, Math.floor(amount / 2)));
+  if (data.response_code === 1 && difficulty) data = await tryOnce(category, null, amount);
+  if (data.response_code === 1 && (difficulty || amount > 5)) data = await tryOnce(category, null, Math.max(5, Math.floor(amount / 2)));
   if (data.response_code !== 0 || !data.results?.length) throw new Error("No questions available for those settings — try different ones.");
   return data.results.map((r) => ({
     category: dec(r.category),
@@ -673,6 +696,7 @@ function renderLobby() {
   $("lobbyPlayers").innerHTML = players.map((p) => `<li>${esc(p.name)}</li>`).join("") || `<li style="opacity:.6">Waiting for players…</li>`;
   $("stageNextBtn").classList.add("hidden");
   $("startGameBtn").disabled = false; // startGame() disables it; a fresh lobby is always startable
+  $("startGameBtn").textContent = "Start game →";
 }
 
 let wakeLock = null;
@@ -694,7 +718,9 @@ async function startGame() {
   holdWake();
   winStungFor = null;
   startHostBeat();
-  $("startGameBtn").disabled = true;
+  const sgb = $("startGameBtn");
+  sgb.disabled = true;
+  if (room.game_type === "trivia") sgb.textContent = "Loading questions…";
   try {
     if (room.game_type === "trivia") await startTrivia();
     else if (room.game_type === "anagram") await startAnagram();
@@ -702,7 +728,8 @@ async function startGame() {
     else await startMlt();
   } catch (e) {
     toast("Couldn't start: " + e.message);
-    $("startGameBtn").disabled = false;
+    sgb.disabled = false;
+    sgb.textContent = "Start game →";
   }
 }
 
