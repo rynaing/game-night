@@ -19,6 +19,9 @@ html.gated body > :not(#gate){display:none !important}
 #gateInput{width:100%;box-sizing:border-box;font-size:24px;letter-spacing:8px;text-indent:8px;text-align:center;padding:10px;border-radius:10px;border:1px solid rgba(255,255,255,.2);background:rgba(0,0,0,.3);color:#fff;margin-bottom:12px}
 #gateBtn{width:100%;padding:12px;border-radius:10px;border:0;font-size:16px;font-weight:700;background:#e8b64c;color:#241d0f;cursor:pointer}
 #gateErr{color:#ff9d9d;opacity:1;margin:12px 0 0}
+/* Back to Arcade */
+.arcade-back{display:inline-flex;align-items:center;gap:6px;background:var(--accent);color:#fff;font-weight:700;font-size:.85rem;text-decoration:none;padding:.45rem 1rem;border-radius:999px;white-space:nowrap}
+.arcade-back:active{transform:scale(.95)}
 </style>
 </head>
 <body>
@@ -70,6 +73,7 @@ html.gated body > :not(#gate){display:none !important}
 
 <header class="topbar">
   <span class="logo">🎮 Game Night</span>
+  <a class="arcade-back" href="https://rynaing.github.io/arcade/" aria-label="Back to Arcade">← Arcade</a>
   <span id="roomBadge" class="room-badge hidden"></span>
   <div class="sound-ctl">
     <select id="styleSelect" aria-label="Music style">
