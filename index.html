@@ -146,6 +146,10 @@ html.gated body > :not(#gate){display:none !important}
         <span class="pick-emoji">⚡</span><span>Math Sprint</span>
         <small>fastest correct answer wins</small>
       </button>
+      <button class="pick-card" data-game="guesstimate">
+        <span class="pick-emoji">🔢</span><span>Guesstimate</span>
+        <small>closest guess wins<br/>without going over</small>
+      </button>
     </div>
 
     <div id="triviaSettings" class="settings">
@@ -244,6 +248,17 @@ html.gated body > :not(#gate){display:none !important}
       <p class="pack-note">Points decay the longer you take — fastest correct answer scores the most. +25 per streak, up to +200.</p>
     </div>
 
+    <div id="guesstimateSettings" class="settings hidden">
+      <label>Rounds
+        <select id="selGuesstimateRounds">
+          <option value="5">5</option>
+          <option value="8" selected>8</option>
+          <option value="10">10</option>
+        </select>
+      </label>
+      <p class="pack-note">Fermi-style estimation questions. Closest guess <strong>without going over</strong> wins each round — Price-is-Right rules.</p>
+    </div>
+
     <div class="row">
       <button id="backHomeBtn" class="btn ghost">← Back</button>
       <button id="createRoomBtn" class="btn primary">Create room →</button>
@@ -312,6 +327,7 @@ html.gated body > :not(#gate){display:none !important}
 <div id="toast" class="toast hidden"></div>
 
 <script src="cx_puzzles.js?v=1790391243"></script>
+<script src="guesstimate_questions.js?v=1790391243"></script>
 <script src="app.js?v=1790391243"></script>
 </body>
 </html>

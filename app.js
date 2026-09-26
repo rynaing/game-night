@@ -370,11 +370,12 @@ function connectChannel() {
     .on("broadcast", { event: "scores" }, async () => { await loadPlayers(); render(); })
     .on("broadcast", { event: "answers" }, async () => {
       if (session.role !== "host") return;
-      await loadHostAnswers(); render();
+      await loadHostAnswers(); await loadGuesstimateAnswers(); render();
       if (room.status === "question") {
         if (room.game_type === "mathsprint") maybeAdvanceMath();
         else maybeAdvanceEarly();
       }
+      if (room.status === "guesstimate_play") maybeAdvanceGuesstimate();
     })
     .on("broadcast", { event: "words" }, async () => { await loadWords(); render(); })
     .on("broadcast", { event: "votes" }, async () => {
@@ -649,6 +650,7 @@ function initSetup() {
       $("mltSettings").classList.toggle("hidden", pickedGame !== "mostlikely");
       $("cxSettings").classList.toggle("hidden", pickedGame !== "commonthreads");
       $("mathSettings").classList.toggle("hidden", pickedGame !== "mathsprint");
+      $("guesstimateSettings").classList.toggle("hidden", pickedGame !== "guesstimate");
     };
   });
   if (!otdbCategories.length) loadCategories();
@@ -733,6 +735,7 @@ async function startGame() {
     else if (room.game_type === "anagram") await startAnagram();
     else if (room.game_type === "commonthreads") await startCx();
     else if (room.game_type === "mathsprint") await startMath();
+    else if (room.game_type === "guesstimate") await startGuesstimate();
     else await startMlt();
   } catch (e) {
     toast("Couldn't start: " + e.message);
@@ -1167,6 +1170,8 @@ function renderStage() {
   else if (room.status === "mlt_vote") renderHostMltVote(c);
   else if (room.status === "mlt_reveal") renderHostMltReveal(c);
   else if (room.status === "cx_play") renderHostCx(c);
+  else if (room.status === "guesstimate_play") renderHostGuesstimate(c);
+  else if (room.status === "guesstimate_reveal") renderHostGuesstimateReveal(c);
   else if (room.status === "game_over") renderHostGameOver(c);
   startTick();
 }
@@ -1369,6 +1374,7 @@ function prefillSetupFromRoom() {
   $("mltSettings").classList.toggle("hidden", pickedGame !== "mostlikely");
   $("cxSettings").classList.toggle("hidden", pickedGame !== "commonthreads");
   $("mathSettings").classList.toggle("hidden", pickedGame !== "mathsprint");
+  $("guesstimateSettings").classList.toggle("hidden", pickedGame !== "guesstimate");
   if (pickedGame === "trivia") {
     selectedCats = [...(s.categories || [])];
     if (!otdbCategories.length) loadCategories();
@@ -1425,6 +1431,8 @@ function gatherSettings() {
     return { rounds: parseInt($("selCxRounds").value, 10) };
   if (pickedGame === "mathsprint")
     return { mode: $("selMathMode").value, count: parseInt($("selMathCount").value, 10) };
+  if (pickedGame === "guesstimate")
+    return { rounds: parseInt($("selGuesstimateRounds").value, 10) };
   return { seconds: parseInt($("selSeconds").value, 10), letters: parseInt($("selLetters").value, 10), min_len: parseInt($("selMinLen").value, 10), allow_repeats: $("selRepeats").value };
 }
 async function startRematch() {
@@ -1472,6 +1480,7 @@ function startTick() {
         if (room.game_type === "mathsprint") await gradeMath();
         else await gradeTrivia();
       }
+      else if (room.status === "guesstimate_play") await gradeGuesstimate();
       else if (room.status === "anagram_play") { await updateRoom({ status: "game_over" }); renderStage(); }
     }
   }, 250);
@@ -1613,7 +1622,7 @@ function render() {
   if (!room) return;
   // A live round means a (re)started game: re-arm the win fanfare so players
   // hear it at every game-over, not just the first one in the room.
-  if (room.status === "question" || room.status === "anagram_play" || room.status === "mlt_vote" || room.status === "cx_play") winStungFor = null;
+  if (room.status === "question" || room.status === "anagram_play" || room.status === "mlt_vote" || room.status === "cx_play" || room.status === "guesstimate_play") winStungFor = null;
   if (room.status === "lobby") Music.setMode("lobby");
   else if (room.status === "game_over") { Music.setMode(null); if (winStungFor !== room.id) { winStungFor = room.id; Music.sting("win"); } }
   else Music.setMode("game");
@@ -1630,6 +1639,8 @@ function render() {
   else if (room.status === "mlt_vote") renderPlayerMltVote(c);
   else if (room.status === "mlt_reveal") renderPlayerMltReveal(c);
   else if (room.status === "cx_play") renderPlayerCx(c);
+  else if (room.status === "guesstimate_play") renderPlayerGuesstimate(c);
+  else if (room.status === "guesstimate_reveal") renderPlayerGuesstimateReveal(c);
   else if (room.status === "game_over") renderPlayerGameOver(c);
   startTick();
 }
@@ -2254,6 +2265,232 @@ async function cxCopy(text, btn) {
     ta.remove();
   }
   if (btn) { const t = btn.textContent; btn.textContent = "Copied! ✅"; setTimeout(() => { btn.textContent = t; }, 1500); }
+}
+
+/* ============================================================
+   GUESSTIMATE — Fermi estimation party game.
+   Each round shows an estimation question; everyone submits a
+   numeric guess on their phone within 30s. Price-is-Right rules:
+   closest guess WITHOUT going over wins the round. Winner gets
+   1000; other under-guesses scale by closeness; over-guesses bust.
+   Guesses ride the game_answers table (answer = numeric string).
+   Question bank lives in guesstimate_questions.js.
+   ============================================================ */
+const GUESSTIMATE_ROUND_SECONDS = 30;
+let gradingGuesstimate = false;
+
+async function startGuesstimate() {
+  const s = room.settings || {};
+  const n = Math.min(s.rounds || 8, GUESSTIMATE_QUESTIONS.length);
+  const questions = shuffle([...GUESSTIMATE_QUESTIONS]).slice(0, n);
+  await api(`game_answers?room_id=eq.${session.room_id}`, { method: "DELETE" });
+  await updateRoom({
+    questions,
+    status: "guesstimate_play",
+    current_index: 0,
+    round_ends_at: new Date(Date.now() + GUESSTIMATE_ROUND_SECONDS * 1000).toISOString(),
+  });
+  await loadGuesstimateAnswers();
+  renderStage();
+}
+
+function guesstimateNum(a) {
+  if (!a || a.answer == null) return NaN;
+  return parseFloat(String(a.answer).replace(/,/g, ""));
+}
+
+function fmtNum(n) {
+  if (!isFinite(n)) return "—";
+  return Math.round(n).toLocaleString("en-US");
+}
+
+async function loadGuesstimateAnswers() {
+  if (!room || room.game_type !== "guesstimate") return;
+  const r = await api(`game_answers?room_id=eq.${session.room_id}&question_index=eq.${room.current_index}&select=*`);
+  hostAnswers = await r.json();
+}
+
+// If every current player has locked in a guess, skip the rest of the timer.
+async function maybeAdvanceGuesstimate() {
+  if (!room || room.game_type !== "guesstimate" || room.status !== "guesstimate_play") return;
+  await loadPlayers();
+  if (!players.length) return;
+  const answered = new Set(hostAnswers.map((a) => a.player_id));
+  if (players.every((p) => answered.has(p.id))) {
+    toast("Everyone's locked in!", 1500);
+    await gradeGuesstimate();
+  }
+}
+
+async function gradeGuesstimate() {
+  if (gradingGuesstimate) return;
+  gradingGuesstimate = true;
+  try {
+    const q = room.questions[room.current_index];
+    const trueAns = q.answer;
+    const r = await api(`game_answers?room_id=eq.${session.room_id}&question_index=eq.${room.current_index}&select=*`);
+    const answers = await r.json();
+    let best = -Infinity;
+    for (const a of answers) {
+      const g = guesstimateNum(a);
+      if (isFinite(g) && g > 0 && g <= trueAns && g > best) best = g;
+    }
+    for (const a of answers) {
+      const g = guesstimateNum(a);
+      const under = isFinite(g) && g > 0 && g <= trueAns;
+      const winner = under && g === best;
+      const pts = !under ? 0 : winner ? 1000 : Math.max(10, Math.round(1000 * g / trueAns));
+      await api(`game_answers?id=eq.${a.id}`, { method: "PATCH", body: JSON.stringify({ is_correct: winner, points: pts }) });
+      a.is_correct = winner; a.points = pts; // keep local copy fresh for the reveal screen
+      if (pts) {
+        const p = players.find((x) => x.id === a.player_id);
+        if (p) await rpc("add_score", { p_player_id: p.id, p_points: pts });
+      }
+    }
+    await loadPlayers();
+    ping("scores");
+    hostAnswers = answers;
+    await updateRoom({ status: "guesstimate_reveal" });
+    renderStage();
+  } finally { gradingGuesstimate = false; }
+}
+
+async function nextGuesstimate() {
+  hostAnswers = [];
+  if (room.current_index + 1 >= room.questions.length) {
+    await updateRoom({ status: "game_over" });
+  } else {
+    await updateRoom({
+      current_index: room.current_index + 1,
+      status: "guesstimate_play",
+      round_ends_at: new Date(Date.now() + GUESSTIMATE_ROUND_SECONDS * 1000).toISOString(),
+    });
+    await loadGuesstimateAnswers();
+  }
+  renderStage();
+}
+
+/* ---------------- host: guesstimate ---------------- */
+function renderHostGuesstimate(c) {
+  const q = room.questions[room.current_index];
+  const n = room.questions.length;
+  c.innerHTML = `
+    <p class="q-cat">🔢 Guesstimate · ${room.current_index + 1}/${n}</p>
+    <p class="q-text">${esc(q.q)}</p>
+    <p class="hint" style="text-align:center">Closest guess WITHOUT going over wins</p>
+    <p class="q-meta"><span id="ansCount">${hostAnswers.length}</span> / ${players.length} answered</p>`;
+  $("stageTimer").classList.remove("hidden");
+}
+
+function renderHostGuesstimateReveal(c) {
+  const q = room.questions[room.current_index];
+  const last = room.current_index + 1 >= room.questions.length;
+  const trueAns = q.answer;
+  const unit = q.unit ? " " + esc(q.unit) : "";
+  const rows = [...hostAnswers]
+    .sort((a, b) => (b.points || 0) - (a.points || 0))
+    .map((a) => {
+      const p = players.find((x) => x.id === a.player_id);
+      const g = guesstimateNum(a);
+      let verdict, mark;
+      if (!isFinite(g) || g <= 0) { verdict = "no guess"; mark = "—"; }
+      else if (g > trueAns) { verdict = `💥 over by ${fmtNum(g - trueAns)}`; mark = "❌"; }
+      else if (a.is_correct) { verdict = "🎯 closest under!"; mark = `✅ +${a.points}`; }
+      else { verdict = `under by ${fmtNum(trueAns - g)}`; mark = `+${a.points}`; }
+      return `<tr class="${a.is_correct ? "rank-1" : ""}"><td>${esc(p ? p.name : "?")}<div class="ans-pick">${fmtNum(g)}${unit}</div></td><td>${mark}<div class="ans-pick">${esc(verdict)}</div></td><td class="pts">${p ? p.score : ""}</td></tr>`;
+    }).join("");
+  c.innerHTML = `
+    <div class="reveal-box">
+      <p class="q-cat">True answer</p>
+      <p class="reveal-answer">${fmtNum(trueAns)}${unit}</p>
+      <p class="hint" style="text-align:center">${esc(q.why)}</p>
+      <table class="score-table">${rows || `<tr><td>No guesses this round 😅</td><td></td><td></td></tr>`}</table>
+      <p class="reveal-count" id="revealCount"></p>
+    </div>`;
+  const nb = $("stageNextBtn");
+  nb.classList.remove("hidden");
+  nb.textContent = last ? "See results →" : "Next question →";
+  nb.onclick = () => { clearInterval(revealTimer); revealTimer = null; nextGuesstimate(); };
+  // Auto-advance after a countdown (same pattern as the trivia reveal).
+  const rk = room.id + ":g" + room.current_index + ":" + (room.round_ends_at || "");
+  if (revealFor !== rk) {
+    revealFor = rk;
+    clearInterval(revealTimer);
+    let s = REVEAL_COUNTDOWN;
+    const show = () => { const el = $("revealCount"); if (el) el.textContent = last ? `Results in ${s}…` : `Next question in ${s}…`; };
+    const advance = async () => {
+      try { await nextGuesstimate(); }
+      catch (e) { revealFor = null; setTimeout(() => renderHostGuesstimateReveal(c), 2000); }
+    };
+    show(); Music.tick(s);
+    revealTimer = setInterval(() => {
+      s--;
+      if (s <= 0) { clearInterval(revealTimer); revealTimer = null; advance(); return; }
+      show(); Music.tick(s);
+    }, 1000);
+  }
+}
+
+/* ---------------- player: guesstimate ---------------- */
+async function renderPlayerGuesstimate(c) {
+  const q = room.questions[room.current_index];
+  await loadMyAnswer();
+  const answered = myAnswers[0];
+  const unit = q.unit ? " " + esc(q.unit) : "";
+  $("playTimer").classList.remove("hidden");
+  if (answered) {
+    c.innerHTML = `<p class="q-cat">🔢 Guesstimate</p><p class="q-text" style="font-size:1.3rem">${esc(q.q)}</p>
+      <p class="locked">Locked in! ✅</p>
+      <div class="my-answer">Your guess:<br/><strong>${fmtNum(guesstimateNum(answered))}${unit}</strong></div>
+      <p class="hint" style="text-align:center">Closest without going over wins…</p>`;
+    return;
+  }
+  c.innerHTML = `<p class="q-cat">🔢 Guesstimate</p><p class="q-text" style="font-size:1.3rem">${esc(q.q)}</p>
+    <div class="guess-row">
+      <input id="guessInput" type="text" inputmode="numeric" pattern="[0-9,]*" placeholder="Your guess" autocomplete="off" />
+      <button id="guessGo" class="btn primary big">Lock in ✓</button>
+    </div>
+    <p class="hint" style="text-align:center">Closest WITHOUT going over wins the round</p>`;
+  const input = $("guessInput");
+  const go = async () => {
+    const raw = input.value.replace(/,/g, "").trim();
+    const n = parseFloat(raw);
+    if (!raw || !isFinite(n) || n <= 0) { toast("Enter a number greater than 0"); return; }
+    $("guessGo").disabled = true; input.disabled = true;
+    await api("game_answers", {
+      method: "POST",
+      body: JSON.stringify({ room_id: session.room_id, player_id: session.player_id, question_index: room.current_index, answer: String(n) }),
+    });
+    ping("answers");
+    render();
+  };
+  $("guessGo").onclick = go;
+  input.addEventListener("keydown", (e) => { if (e.key === "Enter") go(); });
+  try { input.focus(); } catch {}
+}
+
+async function renderPlayerGuesstimateReveal(c) {
+  $("playTimer").classList.add("hidden");
+  const q = room.questions[room.current_index];
+  await loadMyAnswer();
+  const a = myAnswers[0];
+  const g = guesstimateNum(a);
+  const trueAns = q.answer;
+  const unit = q.unit ? " " + esc(q.unit) : "";
+  let verdict;
+  if (!a) verdict = "You didn't answer 😅";
+  else if (!isFinite(g) || g <= 0) verdict = "No valid guess 😅";
+  else if (g > trueAns) verdict = `💥 Over! The answer was ${fmtNum(trueAns)}${unit}`;
+  else if (a.is_correct) verdict = `🎯 Closest without going over! +${a.points}`;
+  else verdict = `Under by ${fmtNum(trueAns - g)} · +${a.points}`;
+  const rk = room.id + ":g" + room.current_index;
+  if (stungReveal !== rk) { stungReveal = rk; Music.sting(a && a.is_correct ? "correct" : "wrong"); }
+  c.innerHTML = `<div class="reveal-box">
+      <p class="q-cat">True answer</p>
+      <p class="reveal-answer" style="font-size:1.4rem">${fmtNum(trueAns)}${unit}</p>
+      <p class="hint" style="text-align:center">${esc(q.why)}</p>
+      <p class="locked">${verdict}</p>
+    </div>`;
 }
 
 /* ---------------- solo ---------------- */
