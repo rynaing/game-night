@@ -142,6 +142,10 @@ html.gated body > :not(#gate){display:none !important}
         <span class="pick-emoji">🧵</span><span>Common Threads</span>
         <small>16 words · 4 hidden links</small>
       </button>
+      <button class="pick-card" data-game="mathsprint">
+        <span class="pick-emoji">⚡</span><span>Math Sprint</span>
+        <small>fastest correct answer wins</small>
+      </button>
     </div>
 
     <div id="triviaSettings" class="settings">
@@ -221,6 +225,25 @@ html.gated body > :not(#gate){display:none !important}
       <p class="pack-note">Find the 4 hidden groups of 4. Yellow 100 · Green 200 · Blue 300 · Purple 400 — plus 200 for the final group. 4 mistakes and you're locked out.</p>
     </div>
 
+    <div id="mathSettings" class="settings hidden">
+      <label>Mode
+        <select id="selMathMode">
+          <option value="times">Times Tables (×2–12)</option>
+          <option value="addsub">Add / Subtract</option>
+          <option value="mixed" selected>Mixed (all four)</option>
+          <option value="seq">Sequences (what comes next?)</option>
+        </select>
+      </label>
+      <label>Questions
+        <select id="selMathCount">
+          <option value="5">5</option>
+          <option value="10" selected>10</option>
+          <option value="15">15</option>
+        </select>
+      </label>
+      <p class="pack-note">Points decay the longer you take — fastest correct answer scores the most. +25 per streak, up to +200.</p>
+    </div>
+
     <div class="row">
       <button id="backHomeBtn" class="btn ghost">← Back</button>
       <button id="createRoomBtn" class="btn primary">Create room →</button>
@@ -288,7 +311,7 @@ html.gated body > :not(#gate){display:none !important}
 
 <div id="toast" class="toast hidden"></div>
 
-<script src="cx_puzzles.js?v=1790322522"></script>
-<script src="app.js?v=1790322522"></script>
+<script src="cx_puzzles.js?v=1790391243"></script>
+<script src="app.js?v=1790391243"></script>
 </body>
 </html>

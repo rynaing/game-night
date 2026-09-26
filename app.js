@@ -371,7 +371,10 @@ function connectChannel() {
     .on("broadcast", { event: "answers" }, async () => {
       if (session.role !== "host") return;
       await loadHostAnswers(); render();
-      if (room.status === "question") maybeAdvanceEarly();
+      if (room.status === "question") {
+        if (room.game_type === "mathsprint") maybeAdvanceMath();
+        else maybeAdvanceEarly();
+      }
     })
     .on("broadcast", { event: "words" }, async () => { await loadWords(); render(); })
     .on("broadcast", { event: "votes" }, async () => {
@@ -419,7 +422,7 @@ async function loadPlayers() {
   players = await r.json();
 }
 async function loadHostAnswers() {
-  if (!room || room.game_type !== "trivia") return;
+  if (!room || (room.game_type !== "trivia" && room.game_type !== "mathsprint")) return;
   const r = await api(`game_answers?room_id=eq.${session.room_id}&question_index=eq.${room.current_index}&select=*,game_players(name)`);
   hostAnswers = await r.json();
 }
@@ -645,6 +648,7 @@ function initSetup() {
       $("anagramSettings").classList.toggle("hidden", pickedGame !== "anagram");
       $("mltSettings").classList.toggle("hidden", pickedGame !== "mostlikely");
       $("cxSettings").classList.toggle("hidden", pickedGame !== "commonthreads");
+      $("mathSettings").classList.toggle("hidden", pickedGame !== "mathsprint");
     };
   });
   if (!otdbCategories.length) loadCategories();
@@ -728,6 +732,7 @@ async function startGame() {
     if (room.game_type === "trivia") await startTrivia();
     else if (room.game_type === "anagram") await startAnagram();
     else if (room.game_type === "commonthreads") await startCx();
+    else if (room.game_type === "mathsprint") await startMath();
     else await startMlt();
   } catch (e) {
     toast("Couldn't start: " + e.message);
@@ -809,6 +814,264 @@ async function nextTrivia() {
     });
   }
   renderStage();
+}
+
+
+/* ---------------- host: math sprint ---------------- */
+// Questions live in game_rooms.questions as {a, op, b, answer}.
+// Statuses reuse the trivia flow ("question" -> "reveal").
+const MATH_MODES = { times: "Times Tables", addsub: "Add / Subtract", mixed: "Mixed", seq: "Sequences" };
+const MATH_ROUND_SECS = 20;
+
+function mathRand(a, b) { return a + Math.floor(Math.random() * (b - a + 1)); }
+
+function genMathQuestion(mode) {
+  let m = mode;
+  if (m === "mixed") m = ["times", "addsub", "div"][mathRand(0, 2)];
+  if (m === "times") {
+    const a = mathRand(2, 12), b = mathRand(2, 12);
+    return { a, op: "\u00d7", b, answer: a * b };
+  }
+  if (m === "div") {
+    const b = mathRand(2, 12), k = mathRand(2, 12);
+    return { a: b * k, op: "\u00f7", b, answer: k };
+  }
+  if (m === "addsub") {
+    let a = mathRand(10, 99), b = mathRand(10, 99);
+    if (Math.random() < 0.5) return { a, op: "+", b, answer: a + b };
+    if (b > a) { const t = a; a = b; b = t; }
+    return { a, op: "\u2212", b, answer: a - b };
+  }
+  // sequences: what comes next? (kept non-negative for the digit keypad)
+  const kind = mathRand(0, 2);
+  let terms, answer;
+  if (kind === 0) {
+    const d = mathRand(2, 9), start = mathRand(2, 20);
+    terms = [0, 1, 2, 3, 4].map((i) => start + i * d);
+    answer = start + 4 * d;
+  } else if (kind === 1) {
+    const start = mathRand(2, 5), r = Math.random() < 0.5 ? 2 : 3;
+    terms = [0, 1, 2, 3, 4].map((i) => start * Math.pow(r, i));
+    answer = start * Math.pow(r, 4);
+  } else {
+    const start = mathRand(2, 6);
+    terms = [0, 1, 2, 3, 4].map((i) => (start + i) * (start + i));
+    answer = (start + 4) * (start + 4);
+  }
+  return { a: terms.slice(0, 4).join(", ") + ", ?", op: "seq", b: "", answer };
+}
+
+function mathDisplay(q) {
+  return q.op === "seq" ? q.a : `${q.a} ${q.op} ${q.b} = ?`;
+}
+
+async function startMath() {
+  const s = room.settings || {};
+  const mode = s.mode || "mixed";
+  const count = s.count || 10;
+  const questions = [];
+  const seen = new Set();
+  let guard = 0;
+  while (questions.length < count && guard++ < count * 30) {
+    const q = genMathQuestion(mode);
+    const key = q.op === "seq" ? q.a : `${q.a}${q.op}${q.b}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    questions.push(q);
+  }
+  await updateRoom({
+    questions,
+    status: "question",
+    current_index: 0,
+    round_ends_at: new Date(Date.now() + MATH_ROUND_SECS * 1000).toISOString(),
+  });
+  renderStage();
+}
+
+let gradingMath = false;
+async function gradeMath() {
+  if (gradingMath) return;
+  gradingMath = true;
+  try {
+  const q = room.questions[room.current_index];
+  const r = await api(`game_answers?room_id=eq.${session.room_id}&question_index=eq.${room.current_index}&select=*`);
+  const answers = await r.json();
+  const endsAt = new Date(room.round_ends_at).getTime();
+  // streaks: consecutive correct answers immediately before this question, per player
+  const streaks = {};
+  const pr = await api(`game_answers?room_id=eq.${session.room_id}&question_index=lt.${room.current_index}&select=player_id,is_correct,question_index&order=player_id.asc,question_index.desc`);
+  for (const row of await pr.json()) {
+    const st = streaks[row.player_id] || (streaks[row.player_id] = { count: 0, lastIdx: room.current_index, broken: false });
+    if (st.broken) continue;
+    if (row.is_correct && row.question_index === st.lastIdx - 1) { st.count++; st.lastIdx = row.question_index; }
+    else st.broken = true;
+  }
+  for (const a of answers) {
+    const correct = a.answer === String(q.answer);
+    const secs = Math.max(0, Math.min(MATH_ROUND_SECS, (new Date(a.answered_at).getTime() - (endsAt - MATH_ROUND_SECS * 1000)) / 1000));
+    let pts = 0;
+    if (correct) {
+      pts = Math.max(100, 1000 - Math.floor(secs) * 40);
+      pts += Math.min(200, ((streaks[a.player_id] || {}).count || 0) * 25);
+    }
+    await api(`game_answers?id=eq.${a.id}`, { method: "PATCH", body: JSON.stringify({ is_correct: correct, points: pts }) });
+    a.is_correct = correct; a.points = pts; // keep local copy fresh for the reveal screen
+    if (pts) {
+      const p = players.find((x) => x.id === a.player_id);
+      if (p) await rpc("add_score", { p_player_id: p.id, p_points: pts });
+    }
+  }
+  await loadPlayers();
+  ping("scores");
+  hostAnswers = answers;
+  await updateRoom({ status: "reveal" });
+  renderStage();
+  } finally { gradingMath = false; }
+}
+
+// If every current player has locked in an answer, skip the rest of the timer.
+async function maybeAdvanceMath() {
+  if (!room || room.game_type !== "mathsprint" || room.status !== "question") return;
+  await loadPlayers();
+  if (!players.length) return;
+  const answered = new Set(hostAnswers.map((a) => a.player_id));
+  if (players.every((p) => answered.has(p.id))) {
+    toast("Everyone's locked in!", 1500);
+    await gradeMath();
+  }
+}
+
+async function nextMath() {
+  hostAnswers = [];
+  if (room.current_index + 1 >= room.questions.length) {
+    await updateRoom({ status: "game_over" });
+  } else {
+    await updateRoom({
+      current_index: room.current_index + 1,
+      status: "question",
+      round_ends_at: new Date(Date.now() + MATH_ROUND_SECS * 1000).toISOString(),
+    });
+  }
+  renderStage();
+}
+
+function renderHostMath(c) {
+  const q = room.questions[room.current_index];
+  const n = room.questions.length;
+  const mode = (room.settings || {}).mode || "mixed";
+  const board = [...players].sort((a, b) => b.score - a.score).map((p, i) =>
+    `<tr class="${i === 0 ? "rank-1" : ""}"><td>${esc(p.name)}</td><td class="pts">${p.score}</td></tr>`).join("");
+  c.innerHTML = `
+    <p class="q-cat">\u26a1 Math Sprint \u00b7 ${esc(MATH_MODES[mode] || "Mixed")} \u00b7 ${room.current_index + 1}/${n}</p>
+    <p class="q-text math-q">${esc(mathDisplay(q))}</p>
+    <p class="q-meta"><span id="ansCount">${hostAnswers.length}</span> / ${players.length} answered</p>
+    <table class="score-table">${board}</table>`;
+  $("stageTimer").classList.remove("hidden");
+}
+
+function renderHostMathReveal(c) {
+  const q = room.questions[room.current_index];
+  const rows = [...players].sort((a, b) => b.score - a.score).map((p, i) => {
+    const a = hostAnswers.find((x) => x.player_id === p.id);
+    const mark = !a ? "\u2014" : a.is_correct ? `\u2705 +${a.points}` : "\u274c";
+    const txt = a && a.answer ? `<div class="ans-pick">${esc(a.answer)}</div>` : "";
+    return `<tr class="${i === 0 ? "rank-1" : ""}"><td>${esc(p.name)}${txt}</td><td>${mark}</td><td class="pts">${p.score}</td></tr>`;
+  }).join("");
+  const last = room.current_index + 1 >= room.questions.length;
+  c.innerHTML = `
+    <div class="reveal-box">
+      <p class="q-cat">${esc(mathDisplay(q))}</p>
+      <p class="reveal-answer">${esc(String(q.answer))}</p>
+      <table class="score-table">${rows}</table>
+      <p class="reveal-count" id="revealCount"></p>
+    </div>`;
+  const nb = $("stageNextBtn");
+  nb.classList.remove("hidden");
+  nb.textContent = last ? "See results \u2192" : "Next question \u2192";
+  nb.onclick = () => { clearInterval(revealTimer); revealTimer = null; nextMath(); };
+  // Auto-advance after a countdown (same pattern as trivia).
+  const rk = room.id + ":" + (room.round_ends_at || "") + ":" + room.current_index;
+  if (room.settings?.auto_advance !== false && revealFor !== rk) {
+    revealFor = rk;
+    clearInterval(revealTimer);
+    let s = REVEAL_COUNTDOWN;
+    const show = () => { const el = $("revealCount"); if (el) el.textContent = last ? `Results in ${s}\u2026` : `Next question in ${s}\u2026`; };
+    const advance = async () => {
+      try { await nextMath(); }
+      catch (e) { revealFor = null; setTimeout(() => renderHostMathReveal(c), 2000); }
+    };
+    show(); Music.tick(s);
+    revealTimer = setInterval(() => {
+      s--;
+      if (s <= 0) { clearInterval(revealTimer); revealTimer = null; advance(); return; }
+      show(); Music.tick(s);
+    }, 1000);
+  }
+}
+
+/* ---------------- player: math sprint ---------------- */
+let mathTyped = "", mathTypedKey = ""; // in-progress keypad entry, reset per question
+
+async function renderPlayerMath(c) {
+  const q = room.questions[room.current_index];
+  await loadMyAnswer();
+  const answered = myAnswers[0];
+  const key = room.id + ":" + room.current_index;
+  if (mathTypedKey !== key) { mathTypedKey = key; mathTyped = ""; }
+  $("playTimer").classList.remove("hidden");
+  if (answered) {
+    c.innerHTML = `<p class="q-cat">\u26a1 Math Sprint \u00b7 ${room.current_index + 1}/${room.questions.length}</p>
+      <p class="q-text math-q">${esc(mathDisplay(q))}</p>
+      <p class="locked">Locked in! \u2705</p>
+      <div class="my-answer">Your answer:<br/><strong>${esc(answered.answer)}</strong></div>
+      <p class="hint" style="text-align:center">Waiting for everyone\u2026</p>`;
+    return;
+  }
+  c.innerHTML = `
+    <p class="q-cat">\u26a1 Math Sprint \u00b7 ${room.current_index + 1}/${room.questions.length}</p>
+    <p class="q-text math-q">${esc(mathDisplay(q))}</p>
+    <div class="math-display" id="mathDisplay">${esc(mathTyped) || "&nbsp;"}</div>
+    <div class="math-keys">
+      ${[1, 2, 3, 4, 5, 6, 7, 8, 9].map((d) => `<button type="button" class="math-key" data-d="${d}">${d}</button>`).join("")}
+      <button type="button" class="math-key ghost" id="mathClear">C</button>
+      <button type="button" class="math-key" data-d="0">0</button>
+      <button type="button" class="math-key ghost" id="mathBack">\u232b</button>
+    </div>
+    <div class="row center"><button id="mathSubmit" class="btn primary big" ${mathTyped ? "" : "disabled"}>Submit \u2713</button></div>
+    <p class="hint" style="text-align:center">Fastest correct answer scores the most!</p>`;
+  const disp = $("mathDisplay"), sub = $("mathSubmit");
+  const refresh = () => { disp.innerHTML = esc(mathTyped) || "&nbsp;"; sub.disabled = !mathTyped.length; };
+  c.querySelectorAll(".math-key[data-d]").forEach((b) => {
+    b.onclick = () => { if (mathTyped.length < 6) { mathTyped += b.dataset.d; refresh(); } };
+  });
+  $("mathClear").onclick = () => { mathTyped = ""; refresh(); };
+  $("mathBack").onclick = () => { mathTyped = mathTyped.slice(0, -1); refresh(); };
+  sub.onclick = async () => {
+    if (!mathTyped.length) return;
+    sub.disabled = true;
+    c.querySelectorAll(".math-key").forEach((x) => x.disabled = true);
+    await api("game_answers", {
+      method: "POST",
+      body: JSON.stringify({ room_id: session.room_id, player_id: session.player_id, question_index: room.current_index, answer: mathTyped }),
+    });
+    ping("answers");
+    render();
+  };
+}
+
+async function renderPlayerMathReveal(c) {
+  $("playTimer").classList.add("hidden");
+  const q = room.questions[room.current_index];
+  await loadMyAnswer();
+  const a = myAnswers[0];
+  const verdict = !a ? "You didn't answer 😅" : a.is_correct ? `\u2705 Correct! +${a.points}` : "\u274c Not quite";
+  const rk = room.id + ":" + (room.round_ends_at || "") + ":" + room.current_index;
+  if (stungReveal !== rk) { stungReveal = rk; Music.sting(a && a.is_correct ? "correct" : "wrong"); }
+  c.innerHTML = `<div class="reveal-box">
+      <p class="q-cat">${esc(mathDisplay(q))}</p>
+      <p class="reveal-answer" style="font-size:1.4rem">${esc(String(q.answer))}</p>
+      <p class="locked">${verdict}</p>
+    </div>`;
 }
 
 /* ---------------- host: anagram ---------------- */
@@ -898,8 +1161,8 @@ function renderStage() {
   eb.textContent = "End game";
   eb.onclick = async () => { clearInterval(revealTimer); revealTimer = null; await updateRoom({ status: "game_over" }); renderStage(); };
   const c = $("stageContent");
-  if (room.status === "question") renderHostQuestion(c);
-  else if (room.status === "reveal") renderHostReveal(c);
+  if (room.status === "question") room.game_type === "mathsprint" ? renderHostMath(c) : renderHostQuestion(c);
+  else if (room.status === "reveal") room.game_type === "mathsprint" ? renderHostMathReveal(c) : renderHostReveal(c);
   else if (room.status === "anagram_play") renderHostAnagram(c);
   else if (room.status === "mlt_vote") renderHostMltVote(c);
   else if (room.status === "mlt_reveal") renderHostMltReveal(c);
@@ -1105,6 +1368,7 @@ function prefillSetupFromRoom() {
   $("anagramSettings").classList.toggle("hidden", pickedGame !== "anagram");
   $("mltSettings").classList.toggle("hidden", pickedGame !== "mostlikely");
   $("cxSettings").classList.toggle("hidden", pickedGame !== "commonthreads");
+  $("mathSettings").classList.toggle("hidden", pickedGame !== "mathsprint");
   if (pickedGame === "trivia") {
     selectedCats = [...(s.categories || [])];
     if (!otdbCategories.length) loadCategories();
@@ -1117,6 +1381,9 @@ function prefillSetupFromRoom() {
     $("selRounds").value = String(s.rounds || 10);
   } else if (pickedGame === "commonthreads") {
     $("selCxRounds").value = String(s.rounds || 5);
+  } else if (pickedGame === "mathsprint") {
+    $("selMathMode").value = s.mode || "mixed";
+    $("selMathCount").value = String(s.count || 10);
   } else {
     $("selSeconds").value = String(s.seconds || 60);
     $("selLetters").value = String(s.letters || 6);
@@ -1156,6 +1423,8 @@ function gatherSettings() {
     return { rounds: parseInt($("selRounds").value, 10) };
   if (pickedGame === "commonthreads")
     return { rounds: parseInt($("selCxRounds").value, 10) };
+  if (pickedGame === "mathsprint")
+    return { mode: $("selMathMode").value, count: parseInt($("selMathCount").value, 10) };
   return { seconds: parseInt($("selSeconds").value, 10), letters: parseInt($("selLetters").value, 10), min_len: parseInt($("selMinLen").value, 10), allow_repeats: $("selRepeats").value };
 }
 async function startRematch() {
@@ -1199,7 +1468,10 @@ function startTick() {
     // status transitions below (gradeTrivia flips status to "reveal", the
     // anagram branch flips to "game_over").
     if (ms <= 0 && session.role === "host") {
-      if (room.status === "question") await gradeTrivia();
+      if (room.status === "question") {
+        if (room.game_type === "mathsprint") await gradeMath();
+        else await gradeTrivia();
+      }
       else if (room.status === "anagram_play") { await updateRoom({ status: "game_over" }); renderStage(); }
     }
   }, 250);
@@ -1352,8 +1624,8 @@ function render() {
     c.innerHTML = `<p class="locked">You're in! 🎉<br/><span style="font-size:1rem;color:var(--muted)">Waiting for the host to start…</span></p>
       <h3 style="text-align:center">Players in</h3>
       <ul class="player-list">${players.map((p) => `<li>${esc(p.name)}</li>`).join("")}</ul>`;
-  } else if (room.status === "question") renderPlayerQuestion(c);
-  else if (room.status === "reveal") renderPlayerReveal(c);
+  } else if (room.status === "question") room.game_type === "mathsprint" ? renderPlayerMath(c) : renderPlayerQuestion(c);
+  else if (room.status === "reveal") room.game_type === "mathsprint" ? renderPlayerMathReveal(c) : renderPlayerReveal(c);
   else if (room.status === "anagram_play") renderPlayerAnagram(c);
   else if (room.status === "mlt_vote") renderPlayerMltVote(c);
   else if (room.status === "mlt_reveal") renderPlayerMltReveal(c);
@@ -1700,197 +1972,89 @@ function cxSolvesFor(pid) {
 }
 
 /* ---------------- host board ---------------- */
-/* ---------------- host board: build once per puzzle, patch on guesses ---------------- */
-let cxHostKey = "";          // room+index the host DOM was built for
-let cxHostSolved = [];       // tiers already rendered as banners
-let cxHostRevealedTiers = [];// tiers whose answers were shown via "Show answers"
-
-function cxHostRowsHTML() {
-  return players.map((p) => {
-    const m = cxMistakesFor(p.id), s = cxSolvesFor(p.id).length;
-    return `<div class="cx-player-row"><span>${esc(p.name)}${m >= 4 ? " 🔒" : ""}</span><span style="color:var(--bad)">${"✗".repeat(Math.min(m, 4))}</span><span class="pts">${s}/4</span></div>`;
-  }).join("");
-}
-
 async function renderHostCx(c) {
   await loadCxGuesses();
   const puz = cxPuzzle();
-  const key = session.room_id + ":" + room.current_index;
-  if (cxHostRevealKey !== key) { cxHostRevealKey = key; cxHostReveal = false; }
-  if (cxHostKey !== key) {
-    // structural build, once per puzzle
-    const n = room.questions.length;
-    const solved = cxSolvedTiers();
-    const remaining = cxRemaining(puz);
-    const tiles = remaining.map((w) => `<button class="cx-tile" disabled>${esc(w)}</button>`).join("");
-    c.innerHTML = `
-      <p class="q-cat">🧵 Common Threads · puzzle ${room.current_index + 1}/${n}</p>
-      <div class="cx-solved" id="cxHostSolved">${solved.map((t) => cxSolvedBanner(cxGroupByTier(puz, t))).join("")}${cxHostReveal ? puz.groups.filter((g) => !solved.includes(g.tier)).map(cxSolvedBanner).join("") : ""}</div>
-      <div class="cx-grid" id="cxHostGrid">${tiles}</div>
-      <div id="cxHostRows"></div>
-      <div id="cxHostFoot"></div>`;
-    cxHostKey = key;
-    cxHostSolved = solved.slice();
-    cxHostRevealedTiers = [];
-    $("stageTimer").classList.add("hidden");
-  }
-  patchHostCx();
-}
-
-// Targeted update for guess events: no full-screen rebuild.
-function patchHostCx() {
-  const puz = cxPuzzle();
-  const solvedDiv = $("cxHostSolved"), grid = $("cxHostGrid");
-  if (!puz || !solvedDiv || !grid) return;
+  const n = room.questions.length;
   const solved = cxSolvedTiers();
-  const fresh = solved.filter((t) => !cxHostSolved.includes(t));
-  if (fresh.length) {
-    const words = new Set();
-    fresh.forEach((t) => {
-      const g = cxGroupByTier(puz, t);
-      if (!cxHostRevealedTiers.includes(t)) solvedDiv.insertAdjacentHTML("beforeend", cxSolvedBanner(g));
-      g.words.forEach((w) => words.add(w));
-    });
-    grid.querySelectorAll(".cx-tile").forEach((el) => { if (words.has(el.textContent)) el.remove(); });
-    cxHostSolved = solved.slice();
-  }
-  if (cxHostReveal && !cxHostRevealedTiers.length) {
-    const unsolved = puz.groups.filter((g) => !solved.includes(g.tier));
-    solvedDiv.insertAdjacentHTML("beforeend", unsolved.map(cxSolvedBanner).join(""));
-    unsolved.forEach((g) => cxHostRevealedTiers.push(g.tier));
-  }
-  const rowsEl = $("cxHostRows");
-  if (rowsEl) rowsEl.innerHTML = cxHostRowsHTML();
   const done = solved.length === 4;
+  const last = room.current_index + 1 >= n;
+  const rkey = session.room_id + ":" + room.current_index;
+  if (cxHostRevealKey !== rkey) { cxHostRevealKey = rkey; cxHostReveal = false; }
+  const remaining = cxRemaining(puz);
+  const banners = solved.map((t) => cxSolvedBanner(cxGroupByTier(puz, t))).join("");
+  const tiles = remaining.map((w) => `<button class="cx-tile" disabled>${esc(w)}</button>`).join("");
   const allLocked = players.length > 0 && players.every((p) => cxMistakesFor(p.id) >= 4);
-  const foot = $("cxHostFoot");
-  if (foot) {
-    foot.innerHTML = `${done ? `<p class="locked">All four groups found! 🎉</p>` : ""}
-      ${!done && allLocked ? `<p class="locked">Everyone's locked out 😅</p>
-        <div class="row center" style="display:flex;justify-content:center;margin-bottom:.6rem"><button id="cxRevealBtn" class="btn">👀 Show answers</button></div>` : ""}`;
-    const rv = $("cxRevealBtn");
-    if (rv) rv.onclick = () => { cxHostReveal = true; patchHostCx(); };
-  }
+  const rows = players.map((p) => {
+    const m = cxMistakesFor(p.id), s = cxSolvesFor(p.id).length;
+    return `<div class="cx-player-row"><span>${esc(p.name)}${m >= 4 ? " 🔒" : ""}</span><span style="color:var(--bad)">${"✗".repeat(Math.min(m, 4))}</span><span class="pts">${s}/4</span></div>`;
+  }).join("");
+  const unsolved = puz.groups.filter((g) => !solved.includes(g.tier));
+  c.innerHTML = `
+    <p class="q-cat">🧵 Common Threads · puzzle ${room.current_index + 1}/${n}</p>
+    <div class="cx-solved">${banners}${cxHostReveal ? unsolved.map(cxSolvedBanner).join("") : ""}</div>
+    <div class="cx-grid">${tiles}</div>
+    ${rows}
+    ${done ? `<p class="locked">All four groups found! 🎉</p>` : ""}
+    ${!done && allLocked ? `<p class="locked">Everyone's locked out 😅</p>
+      <div class="row center" style="display:flex;justify-content:center;margin-bottom:.6rem"><button id="cxRevealBtn" class="btn">👀 Show answers</button></div>` : ""}`;
+  $("stageTimer").classList.add("hidden");
+  const rv = $("cxRevealBtn");
+  if (rv) rv.onclick = () => { cxHostReveal = true; render(); };
   const nb = $("stageNextBtn");
-  if (nb) {
-    const last = room.current_index + 1 >= room.questions.length;
-    if (done || allLocked) {
-      nb.classList.remove("hidden");
-      nb.textContent = last ? "See results →" : done ? "Next puzzle →" : "Skip puzzle →";
-      nb.onclick = () => nextCx();
-    } else nb.classList.add("hidden");
-  }
+  if (done || allLocked) {
+    nb.classList.remove("hidden");
+    nb.textContent = last ? "See results →" : done ? "Next puzzle →" : "Skip puzzle →";
+    nb.onclick = () => nextCx();
+  } else nb.classList.add("hidden");
 }
 
-/* ---------------- player board: build once per puzzle, patch on guesses ---------------- */
-let cxPlayerSolved = [];   // tiers already rendered as banners on this device
-
-function cxDotsHTML(mistakes) {
-  const dots = "✗".repeat(mistakes) + "○".repeat(4 - mistakes);
-  return dots.split("").map((d) => `<span class="${d === "✗" ? "used" : "left"}">${d}</span>`).join("");
-}
-
-function cxPlayerBodyHTML(puz, done, locked, mistakes) {
-  if (done) return `<p class="locked">Puzzle complete! 🎉</p><p class="hint" style="text-align:center">Waiting for the host…</p>`;
-  const tiles = cxOrder.map((w) =>
-    `<button class="cx-tile${cxSelected.includes(w) ? " selected" : ""}"${locked ? " disabled" : ""}>${esc(w)}</button>`).join("");
-  if (locked) return `<p class="locked">You're locked out for this puzzle 😅</p><div class="cx-grid" id="cxPlayerGrid">${tiles}</div>`;
-  return `<div class="cx-grid" id="cxPlayerGrid">${tiles}</div>
-    <div class="cx-status" id="cxStatus">${esc(cxStatusMsg)}</div>
-    <div class="cx-controls">
-      <button id="cxSubmit" class="btn primary" ${cxSelected.length === 4 ? "" : "disabled"}>Submit</button>
-      <button id="cxShuffle" class="btn">🔀 Shuffle</button>
-      <button id="cxClear" class="btn ghost">Deselect all</button>
-    </div>
-    <div class="cx-mistakes" id="cxDots">${cxDotsHTML(mistakes)}</div>
-    <p class="hint" style="text-align:center">4 mistakes = locked out</p>`;
-}
-
-function wirePlayerTiles() {
-  const grid = $("cxPlayerGrid");
-  if (!grid) return;
-  grid.querySelectorAll(".cx-tile").forEach((t) => {
-    const w = t.textContent;
-    t.onclick = () => {
-      if (cxSelected.includes(w)) { cxSelected = cxSelected.filter((x) => x !== w); t.classList.remove("selected"); }
-      else if (cxSelected.length < 4) { cxSelected.push(w); t.classList.add("selected"); }
-      else return;
-      const sb = $("cxSubmit");
-      if (sb) sb.disabled = cxSelected.length !== 4;
-    };
-  });
-}
-
-function wirePlayerControls() {
-  const sh = $("cxShuffle"), cl = $("cxClear"), sb = $("cxSubmit");
-  if (sh) sh.onclick = () => {
-    cxOrder = shuffle(cxOrder);
-    const grid = $("cxPlayerGrid");
-    if (grid) {
-      grid.innerHTML = cxOrder.map((w) =>
-        `<button class="cx-tile${cxSelected.includes(w) ? " selected" : ""}>${esc(w)}</button>`).join("");
-      wirePlayerTiles();
-    }
-  };
-  if (cl) cl.onclick = () => {
-    cxSelected = [];
-    document.querySelectorAll("#cxPlayerGrid .cx-tile.selected").forEach((t) => t.classList.remove("selected"));
-    const s = $("cxSubmit");
-    if (s) s.disabled = true;
-  };
-  if (sb) sb.onclick = () => submitCxGuess();
-}
-
+/* ---------------- player board ---------------- */
 async function renderPlayerCx(c) {
   $("playTimer").classList.add("hidden");
   await loadCxGuesses();
   const puz = cxPuzzle();
   const key = session.room_id + ":" + room.current_index;
-  if (cxSelKey === key && $("cxPlayerSolved") && $("cxPlayerBody")) { patchPlayerCx(); return; }
-  // structural build, once per puzzle
-  cxSelKey = key; cxSelected = []; cxOrder = cxRemaining(puz); cxStatusMsg = "";
+  if (cxSelKey !== key) { cxSelKey = key; cxSelected = []; cxOrder = cxRemaining(puz); cxStatusMsg = ""; }
   const solved = cxSolvedTiers();
+  const done = solved.length === 4;
+  const remaining = cxRemaining(puz);
+  cxOrder = cxOrder.filter((w) => remaining.includes(w));
+  remaining.forEach((w) => { if (!cxOrder.includes(w)) cxOrder.push(w); });
+  cxSelected = cxSelected.filter((w) => remaining.includes(w));
   const mistakes = cxMistakesFor(session.player_id);
-  const locked = mistakes >= 4, done = solved.length === 4;
-  cxPlayerSolved = solved.slice();
+  const locked = mistakes >= 4;
+  const banners = solved.map((t) => cxSolvedBanner(cxGroupByTier(puz, t))).join("");
+  const tiles = cxOrder.map((w, i) =>
+    `<button class="cx-tile${cxSelected.includes(w) ? " selected" : ""}" data-i="${i}" ${done || locked ? "disabled" : ""}>${esc(w)}</button>`).join("");
+  const dots = "✗".repeat(mistakes) + "○".repeat(4 - mistakes);
   c.innerHTML = `
     <p class="q-cat">🧵 Common Threads · puzzle ${room.current_index + 1}/${room.questions.length}</p>
-    <div class="cx-solved" id="cxPlayerSolved">${solved.map((t) => cxSolvedBanner(cxGroupByTier(puz, t))).join("")}</div>
-    <div id="cxPlayerBody">${cxPlayerBodyHTML(puz, done, locked, mistakes)}</div>`;
+    <div class="cx-solved">${banners}</div>
+    ${done ? `<p class="locked">Puzzle complete! 🎉</p><p class="hint" style="text-align:center">Waiting for the host…</p>`
+      : locked ? `<p class="locked">You're locked out for this puzzle 😅</p><div class="cx-grid">${tiles}</div>`
+      : `<div class="cx-grid">${tiles}</div>
+        <div class="cx-status" id="cxStatus">${esc(cxStatusMsg)}</div>
+        <div class="cx-controls">
+          <button id="cxSubmit" class="btn primary" ${cxSelected.length === 4 ? "" : "disabled"}>Submit</button>
+          <button id="cxShuffle" class="btn">🔀 Shuffle</button>
+          <button id="cxClear" class="btn ghost">Deselect all</button>
+        </div>
+        <div class="cx-mistakes">${dots.split("").map((d) => `<span class="${d === "✗" ? "used" : "left"}">${d}</span>`).join("")}</div>
+        <p class="hint" style="text-align:center">4 mistakes = locked out</p>`}`;
   if (done || locked) return;
-  wirePlayerTiles();
-  wirePlayerControls();
-}
-
-// Targeted update for guess events (own + other players'): no full-screen rebuild.
-function patchPlayerCx() {
-  const puz = cxPuzzle();
-  const solvedDiv = $("cxPlayerSolved"), body = $("cxPlayerBody");
-  if (!puz || !solvedDiv || !body) { render(); return; }
-  const solved = cxSolvedTiers();
-  const mistakes = cxMistakesFor(session.player_id);
-  const locked = mistakes >= 4, done = solved.length === 4;
-  if (done || locked) { cxSelKey = ""; render(); return; }  // structural transition, rare
-  const fresh = solved.filter((t) => !cxPlayerSolved.includes(t));
-  if (fresh.length) {
-    const words = new Set();
-    fresh.forEach((t) => {
-      const g = cxGroupByTier(puz, t);
-      solvedDiv.insertAdjacentHTML("beforeend", cxSolvedBanner(g));
-      g.words.forEach((w) => words.add(w));
-    });
-    const grid = $("cxPlayerGrid");
-    if (grid) grid.querySelectorAll(".cx-tile").forEach((el) => { if (words.has(el.textContent)) el.remove(); });
-    cxOrder = cxOrder.filter((w) => !words.has(w));
-    cxSelected = cxSelected.filter((w) => !words.has(w));
-    cxPlayerSolved = solved.slice();
-    const sb = $("cxSubmit");
-    if (sb) sb.disabled = cxSelected.length !== 4;
-  }
-  const dots = $("cxDots");
-  if (dots) dots.innerHTML = cxDotsHTML(mistakes);
-  const st = $("cxStatus");
-  if (st && st.textContent !== cxStatusMsg) st.textContent = cxStatusMsg;
+  c.querySelectorAll(".cx-tile[data-i]").forEach((t) => {
+    t.onclick = () => {
+      const w = cxOrder[Number(t.dataset.i)];
+      if (cxSelected.includes(w)) cxSelected = cxSelected.filter((x) => x !== w);
+      else if (cxSelected.length < 4) cxSelected.push(w);
+      else return;
+      render();
+    };
+  });
+  $("cxShuffle").onclick = () => { cxOrder = shuffle(cxOrder); render(); };
+  $("cxClear").onclick = () => { cxSelected = []; render(); };
+  $("cxSubmit").onclick = () => submitCxGuess();
 }
 
 async function submitCxGuess() {
@@ -1898,78 +2062,38 @@ async function submitCxGuess() {
   if (words.length !== 4) return;
   const btn = $("cxSubmit");
   if (btn) btn.disabled = true;
-  const reenable = () => { const b = $("cxSubmit"); if (b) b.disabled = cxSelected.length !== 4; };
   let res = null;
   try {
     const rows = await rpc("submit_cx_guess", { p_room: session.room_id, p_player: session.player_id, p_words: words });
     res = rows && rows[0];
-  } catch { toast("Couldn't submit — try again."); reenable(); return; }
+  } catch { toast("Couldn't submit — try again."); render(); return; }
   await loadPlayers(); await loadCxGuesses();
   cxSelected = [];
-  document.querySelectorAll("#cxPlayerGrid .cx-tile.selected").forEach((t) => t.classList.remove("selected"));
   if (res && res.result === "correct") {
     cxStatusMsg = "";
     Music.sting(res.final_group ? "win" : "correct");
     toast(res.final_group ? `+${res.points}! Final group 🎉` : `+${res.points}! ${CX_TIER_EMOJI[res.tier]}`);
-    // targeted: append banner + remove the 4 solved tiles, no full rebuild
-    const puz = cxPuzzle();
-    const g = puz ? cxGroupByTier(puz, res.tier) : null;
-    if (g) {
-      const sd = $("cxPlayerSolved");
-      if (sd) sd.insertAdjacentHTML("beforeend", cxSolvedBanner(g));
-      if (!cxPlayerSolved.includes(res.tier)) cxPlayerSolved.push(res.tier);
-      const wordSet = new Set(g.words);
-      const grid = $("cxPlayerGrid");
-      if (grid) grid.querySelectorAll(".cx-tile").forEach((el) => { if (wordSet.has(el.textContent)) el.remove(); });
-      cxOrder = cxOrder.filter((w) => !wordSet.has(w));
-    }
-    const st = $("cxStatus");
-    if (st) st.textContent = "";
-    const sb = $("cxSubmit");
-    if (sb) sb.disabled = true;
-    if (res.final_group) {
-      const body = $("cxPlayerBody");
-      if (body) body.innerHTML = `<p class="locked">Puzzle complete! 🎉</p><p class="hint" style="text-align:center">Waiting for the host…</p>`;
-    }
-    ping("guesses");
-    return;
-  }
-  if (res && res.result === "already") {
+  } else if (res && res.result === "already") {
     toast("Already tried that combo 🙂");
-    reenable();
-    ping("guesses");
-    return;
-  }
-  if (res && res.result === "wrong") {
+  } else if (res && res.result === "wrong") {
     Music.sting("wrong");
     const tried = new Set(words.map((w) => w.toUpperCase()));
-    const shaken = [];
-    document.querySelectorAll("#cxPlayerGrid .cx-tile").forEach((t) => {
-      if (tried.has(t.textContent.toUpperCase())) { t.classList.add("shake"); shaken.push(t); }
+    document.querySelectorAll("#playContent .cx-tile").forEach((t) => {
+      if (tried.has(cxOrder[Number(t.dataset.i)])) t.classList.add("shake");
     });
-    setTimeout(() => shaken.forEach((t) => t.classList.remove("shake")), 750);
     cxStatusMsg = res.one_away ? "One away… 👀" : "Not quite — try again.";
-    const dots = $("cxDots");
-    if (dots) dots.innerHTML = cxDotsHTML(cxMistakesFor(session.player_id));
-    const st = $("cxStatus");
-    if (st) st.textContent = cxStatusMsg;
     if (!res.one_away && !res.locked) toast("Nope — try again.");
     if (res.locked) toast("Locked out for this puzzle 😅");
     ping("guesses");
-    if (res.locked) { cxSelKey = ""; render(); }  // structural: locked view
-    else { const sb = $("cxSubmit"); if (sb) sb.disabled = true; }
+    setTimeout(() => render(), 700);
     return;
-  }
-  if (res && res.result === "locked") {
+  } else if (res && res.result === "locked") {
     toast("You're locked out for this puzzle 😅");
-    ping("guesses");
-    cxSelKey = "";
-    render();
-    return;
+  } else {
+    toast("Hmm, that didn't go through — try again.");
   }
-  toast("Hmm, that didn't go through — try again.");
   ping("guesses");
-  reenable();
+  render();
 }
 
 /* ---------------- share / copy ---------------- */
