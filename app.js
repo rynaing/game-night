@@ -1972,89 +1972,197 @@ function cxSolvesFor(pid) {
 }
 
 /* ---------------- host board ---------------- */
-async function renderHostCx(c) {
-  await loadCxGuesses();
-  const puz = cxPuzzle();
-  const n = room.questions.length;
-  const solved = cxSolvedTiers();
-  const done = solved.length === 4;
-  const last = room.current_index + 1 >= n;
-  const rkey = session.room_id + ":" + room.current_index;
-  if (cxHostRevealKey !== rkey) { cxHostRevealKey = rkey; cxHostReveal = false; }
-  const remaining = cxRemaining(puz);
-  const banners = solved.map((t) => cxSolvedBanner(cxGroupByTier(puz, t))).join("");
-  const tiles = remaining.map((w) => `<button class="cx-tile" disabled>${esc(w)}</button>`).join("");
-  const allLocked = players.length > 0 && players.every((p) => cxMistakesFor(p.id) >= 4);
-  const rows = players.map((p) => {
+/* ---------------- host board: build once per puzzle, patch on guesses ---------------- */
+let cxHostKey = "";          // room+index the host DOM was built for
+let cxHostSolved = [];       // tiers already rendered as banners
+let cxHostRevealedTiers = [];// tiers whose answers were shown via "Show answers"
+
+function cxHostRowsHTML() {
+  return players.map((p) => {
     const m = cxMistakesFor(p.id), s = cxSolvesFor(p.id).length;
     return `<div class="cx-player-row"><span>${esc(p.name)}${m >= 4 ? " 🔒" : ""}</span><span style="color:var(--bad)">${"✗".repeat(Math.min(m, 4))}</span><span class="pts">${s}/4</span></div>`;
   }).join("");
-  const unsolved = puz.groups.filter((g) => !solved.includes(g.tier));
-  c.innerHTML = `
-    <p class="q-cat">🧵 Common Threads · puzzle ${room.current_index + 1}/${n}</p>
-    <div class="cx-solved">${banners}${cxHostReveal ? unsolved.map(cxSolvedBanner).join("") : ""}</div>
-    <div class="cx-grid">${tiles}</div>
-    ${rows}
-    ${done ? `<p class="locked">All four groups found! 🎉</p>` : ""}
-    ${!done && allLocked ? `<p class="locked">Everyone's locked out 😅</p>
-      <div class="row center" style="display:flex;justify-content:center;margin-bottom:.6rem"><button id="cxRevealBtn" class="btn">👀 Show answers</button></div>` : ""}`;
-  $("stageTimer").classList.add("hidden");
-  const rv = $("cxRevealBtn");
-  if (rv) rv.onclick = () => { cxHostReveal = true; render(); };
-  const nb = $("stageNextBtn");
-  if (done || allLocked) {
-    nb.classList.remove("hidden");
-    nb.textContent = last ? "See results →" : done ? "Next puzzle →" : "Skip puzzle →";
-    nb.onclick = () => nextCx();
-  } else nb.classList.add("hidden");
 }
 
-/* ---------------- player board ---------------- */
+async function renderHostCx(c) {
+  await loadCxGuesses();
+  const puz = cxPuzzle();
+  const key = session.room_id + ":" + room.current_index;
+  if (cxHostRevealKey !== key) { cxHostRevealKey = key; cxHostReveal = false; }
+  if (cxHostKey !== key) {
+    // structural build, once per puzzle
+    const n = room.questions.length;
+    const solved = cxSolvedTiers();
+    const remaining = cxRemaining(puz);
+    const tiles = remaining.map((w) => `<button class="cx-tile" disabled>${esc(w)}</button>`).join("");
+    c.innerHTML = `
+      <p class="q-cat">🧵 Common Threads · puzzle ${room.current_index + 1}/${n}</p>
+      <div class="cx-solved" id="cxHostSolved">${solved.map((t) => cxSolvedBanner(cxGroupByTier(puz, t))).join("")}${cxHostReveal ? puz.groups.filter((g) => !solved.includes(g.tier)).map(cxSolvedBanner).join("") : ""}</div>
+      <div class="cx-grid" id="cxHostGrid">${tiles}</div>
+      <div id="cxHostRows"></div>
+      <div id="cxHostFoot"></div>`;
+    cxHostKey = key;
+    cxHostSolved = solved.slice();
+    cxHostRevealedTiers = [];
+    $("stageTimer").classList.add("hidden");
+  }
+  patchHostCx();
+}
+
+// Targeted update for guess events: no full-screen rebuild.
+function patchHostCx() {
+  const puz = cxPuzzle();
+  const solvedDiv = $("cxHostSolved"), grid = $("cxHostGrid");
+  if (!puz || !solvedDiv || !grid) return;
+  const solved = cxSolvedTiers();
+  const fresh = solved.filter((t) => !cxHostSolved.includes(t));
+  if (fresh.length) {
+    const words = new Set();
+    fresh.forEach((t) => {
+      const g = cxGroupByTier(puz, t);
+      if (!cxHostRevealedTiers.includes(t)) solvedDiv.insertAdjacentHTML("beforeend", cxSolvedBanner(g));
+      g.words.forEach((w) => words.add(w));
+    });
+    grid.querySelectorAll(".cx-tile").forEach((el) => { if (words.has(el.textContent)) el.remove(); });
+    cxHostSolved = solved.slice();
+  }
+  if (cxHostReveal && !cxHostRevealedTiers.length) {
+    const unsolved = puz.groups.filter((g) => !solved.includes(g.tier));
+    solvedDiv.insertAdjacentHTML("beforeend", unsolved.map(cxSolvedBanner).join(""));
+    unsolved.forEach((g) => cxHostRevealedTiers.push(g.tier));
+  }
+  const rowsEl = $("cxHostRows");
+  if (rowsEl) rowsEl.innerHTML = cxHostRowsHTML();
+  const done = solved.length === 4;
+  const allLocked = players.length > 0 && players.every((p) => cxMistakesFor(p.id) >= 4);
+  const foot = $("cxHostFoot");
+  if (foot) {
+    foot.innerHTML = `${done ? `<p class="locked">All four groups found! 🎉</p>` : ""}
+      ${!done && allLocked ? `<p class="locked">Everyone's locked out 😅</p>
+        <div class="row center" style="display:flex;justify-content:center;margin-bottom:.6rem"><button id="cxRevealBtn" class="btn">👀 Show answers</button></div>` : ""}`;
+    const rv = $("cxRevealBtn");
+    if (rv) rv.onclick = () => { cxHostReveal = true; patchHostCx(); };
+  }
+  const nb = $("stageNextBtn");
+  if (nb) {
+    const last = room.current_index + 1 >= room.questions.length;
+    if (done || allLocked) {
+      nb.classList.remove("hidden");
+      nb.textContent = last ? "See results →" : done ? "Next puzzle →" : "Skip puzzle →";
+      nb.onclick = () => nextCx();
+    } else nb.classList.add("hidden");
+  }
+}
+
+/* ---------------- player board: build once per puzzle, patch on guesses ---------------- */
+let cxPlayerSolved = [];   // tiers already rendered as banners on this device
+
+function cxDotsHTML(mistakes) {
+  const dots = "✗".repeat(mistakes) + "○".repeat(4 - mistakes);
+  return dots.split("").map((d) => `<span class="${d === "✗" ? "used" : "left"}">${d}</span>`).join("");
+}
+
+function cxPlayerBodyHTML(puz, done, locked, mistakes) {
+  if (done) return `<p class="locked">Puzzle complete! 🎉</p><p class="hint" style="text-align:center">Waiting for the host…</p>`;
+  const tiles = cxOrder.map((w) =>
+    `<button class="cx-tile${cxSelected.includes(w) ? " selected" : ""}"${locked ? " disabled" : ""}>${esc(w)}</button>`).join("");
+  if (locked) return `<p class="locked">You're locked out for this puzzle 😅</p><div class="cx-grid" id="cxPlayerGrid">${tiles}</div>`;
+  return `<div class="cx-grid" id="cxPlayerGrid">${tiles}</div>
+    <div class="cx-status" id="cxStatus">${esc(cxStatusMsg)}</div>
+    <div class="cx-controls">
+      <button id="cxSubmit" class="btn primary" ${cxSelected.length === 4 ? "" : "disabled"}>Submit</button>
+      <button id="cxShuffle" class="btn">🔀 Shuffle</button>
+      <button id="cxClear" class="btn ghost">Deselect all</button>
+    </div>
+    <div class="cx-mistakes" id="cxDots">${cxDotsHTML(mistakes)}</div>
+    <p class="hint" style="text-align:center">4 mistakes = locked out</p>`;
+}
+
+function wirePlayerTiles() {
+  const grid = $("cxPlayerGrid");
+  if (!grid) return;
+  grid.querySelectorAll(".cx-tile").forEach((t) => {
+    const w = t.textContent;
+    t.onclick = () => {
+      if (cxSelected.includes(w)) { cxSelected = cxSelected.filter((x) => x !== w); t.classList.remove("selected"); }
+      else if (cxSelected.length < 4) { cxSelected.push(w); t.classList.add("selected"); }
+      else return;
+      const sb = $("cxSubmit");
+      if (sb) sb.disabled = cxSelected.length !== 4;
+    };
+  });
+}
+
+function wirePlayerControls() {
+  const sh = $("cxShuffle"), cl = $("cxClear"), sb = $("cxSubmit");
+  if (sh) sh.onclick = () => {
+    cxOrder = shuffle(cxOrder);
+    const grid = $("cxPlayerGrid");
+    if (grid) {
+      grid.innerHTML = cxOrder.map((w) =>
+        `<button class="cx-tile${cxSelected.includes(w) ? " selected" : ""}>${esc(w)}</button>`).join("");
+      wirePlayerTiles();
+    }
+  };
+  if (cl) cl.onclick = () => {
+    cxSelected = [];
+    document.querySelectorAll("#cxPlayerGrid .cx-tile.selected").forEach((t) => t.classList.remove("selected"));
+    const s = $("cxSubmit");
+    if (s) s.disabled = true;
+  };
+  if (sb) sb.onclick = () => submitCxGuess();
+}
+
 async function renderPlayerCx(c) {
   $("playTimer").classList.add("hidden");
   await loadCxGuesses();
   const puz = cxPuzzle();
   const key = session.room_id + ":" + room.current_index;
-  if (cxSelKey !== key) { cxSelKey = key; cxSelected = []; cxOrder = cxRemaining(puz); cxStatusMsg = ""; }
+  if (cxSelKey === key && $("cxPlayerSolved") && $("cxPlayerBody")) { patchPlayerCx(); return; }
+  // structural build, once per puzzle
+  cxSelKey = key; cxSelected = []; cxOrder = cxRemaining(puz); cxStatusMsg = "";
   const solved = cxSolvedTiers();
-  const done = solved.length === 4;
-  const remaining = cxRemaining(puz);
-  cxOrder = cxOrder.filter((w) => remaining.includes(w));
-  remaining.forEach((w) => { if (!cxOrder.includes(w)) cxOrder.push(w); });
-  cxSelected = cxSelected.filter((w) => remaining.includes(w));
   const mistakes = cxMistakesFor(session.player_id);
-  const locked = mistakes >= 4;
-  const banners = solved.map((t) => cxSolvedBanner(cxGroupByTier(puz, t))).join("");
-  const tiles = cxOrder.map((w, i) =>
-    `<button class="cx-tile${cxSelected.includes(w) ? " selected" : ""}" data-i="${i}" ${done || locked ? "disabled" : ""}>${esc(w)}</button>`).join("");
-  const dots = "✗".repeat(mistakes) + "○".repeat(4 - mistakes);
+  const locked = mistakes >= 4, done = solved.length === 4;
+  cxPlayerSolved = solved.slice();
   c.innerHTML = `
     <p class="q-cat">🧵 Common Threads · puzzle ${room.current_index + 1}/${room.questions.length}</p>
-    <div class="cx-solved">${banners}</div>
-    ${done ? `<p class="locked">Puzzle complete! 🎉</p><p class="hint" style="text-align:center">Waiting for the host…</p>`
-      : locked ? `<p class="locked">You're locked out for this puzzle 😅</p><div class="cx-grid">${tiles}</div>`
-      : `<div class="cx-grid">${tiles}</div>
-        <div class="cx-status" id="cxStatus">${esc(cxStatusMsg)}</div>
-        <div class="cx-controls">
-          <button id="cxSubmit" class="btn primary" ${cxSelected.length === 4 ? "" : "disabled"}>Submit</button>
-          <button id="cxShuffle" class="btn">🔀 Shuffle</button>
-          <button id="cxClear" class="btn ghost">Deselect all</button>
-        </div>
-        <div class="cx-mistakes">${dots.split("").map((d) => `<span class="${d === "✗" ? "used" : "left"}">${d}</span>`).join("")}</div>
-        <p class="hint" style="text-align:center">4 mistakes = locked out</p>`}`;
+    <div class="cx-solved" id="cxPlayerSolved">${solved.map((t) => cxSolvedBanner(cxGroupByTier(puz, t))).join("")}</div>
+    <div id="cxPlayerBody">${cxPlayerBodyHTML(puz, done, locked, mistakes)}</div>`;
   if (done || locked) return;
-  c.querySelectorAll(".cx-tile[data-i]").forEach((t) => {
-    t.onclick = () => {
-      const w = cxOrder[Number(t.dataset.i)];
-      if (cxSelected.includes(w)) cxSelected = cxSelected.filter((x) => x !== w);
-      else if (cxSelected.length < 4) cxSelected.push(w);
-      else return;
-      render();
-    };
-  });
-  $("cxShuffle").onclick = () => { cxOrder = shuffle(cxOrder); render(); };
-  $("cxClear").onclick = () => { cxSelected = []; render(); };
-  $("cxSubmit").onclick = () => submitCxGuess();
+  wirePlayerTiles();
+  wirePlayerControls();
+}
+
+// Targeted update for guess events (own + other players'): no full-screen rebuild.
+function patchPlayerCx() {
+  const puz = cxPuzzle();
+  const solvedDiv = $("cxPlayerSolved"), body = $("cxPlayerBody");
+  if (!puz || !solvedDiv || !body) { render(); return; }
+  const solved = cxSolvedTiers();
+  const mistakes = cxMistakesFor(session.player_id);
+  const locked = mistakes >= 4, done = solved.length === 4;
+  if (done || locked) { cxSelKey = ""; render(); return; }  // structural transition, rare
+  const fresh = solved.filter((t) => !cxPlayerSolved.includes(t));
+  if (fresh.length) {
+    const words = new Set();
+    fresh.forEach((t) => {
+      const g = cxGroupByTier(puz, t);
+      solvedDiv.insertAdjacentHTML("beforeend", cxSolvedBanner(g));
+      g.words.forEach((w) => words.add(w));
+    });
+    const grid = $("cxPlayerGrid");
+    if (grid) grid.querySelectorAll(".cx-tile").forEach((el) => { if (words.has(el.textContent)) el.remove(); });
+    cxOrder = cxOrder.filter((w) => !words.has(w));
+    cxSelected = cxSelected.filter((w) => !words.has(w));
+    cxPlayerSolved = solved.slice();
+    const sb = $("cxSubmit");
+    if (sb) sb.disabled = cxSelected.length !== 4;
+  }
+  const dots = $("cxDots");
+  if (dots) dots.innerHTML = cxDotsHTML(mistakes);
+  const st = $("cxStatus");
+  if (st && st.textContent !== cxStatusMsg) st.textContent = cxStatusMsg;
 }
 
 async function submitCxGuess() {
@@ -2062,38 +2170,78 @@ async function submitCxGuess() {
   if (words.length !== 4) return;
   const btn = $("cxSubmit");
   if (btn) btn.disabled = true;
+  const reenable = () => { const b = $("cxSubmit"); if (b) b.disabled = cxSelected.length !== 4; };
   let res = null;
   try {
     const rows = await rpc("submit_cx_guess", { p_room: session.room_id, p_player: session.player_id, p_words: words });
     res = rows && rows[0];
-  } catch { toast("Couldn't submit — try again."); render(); return; }
+  } catch { toast("Couldn't submit — try again."); reenable(); return; }
   await loadPlayers(); await loadCxGuesses();
   cxSelected = [];
+  document.querySelectorAll("#cxPlayerGrid .cx-tile.selected").forEach((t) => t.classList.remove("selected"));
   if (res && res.result === "correct") {
     cxStatusMsg = "";
     Music.sting(res.final_group ? "win" : "correct");
     toast(res.final_group ? `+${res.points}! Final group 🎉` : `+${res.points}! ${CX_TIER_EMOJI[res.tier]}`);
-  } else if (res && res.result === "already") {
+    // targeted: append banner + remove the 4 solved tiles, no full rebuild
+    const puz = cxPuzzle();
+    const g = puz ? cxGroupByTier(puz, res.tier) : null;
+    if (g) {
+      const sd = $("cxPlayerSolved");
+      if (sd) sd.insertAdjacentHTML("beforeend", cxSolvedBanner(g));
+      if (!cxPlayerSolved.includes(res.tier)) cxPlayerSolved.push(res.tier);
+      const wordSet = new Set(g.words);
+      const grid = $("cxPlayerGrid");
+      if (grid) grid.querySelectorAll(".cx-tile").forEach((el) => { if (wordSet.has(el.textContent)) el.remove(); });
+      cxOrder = cxOrder.filter((w) => !wordSet.has(w));
+    }
+    const st = $("cxStatus");
+    if (st) st.textContent = "";
+    const sb = $("cxSubmit");
+    if (sb) sb.disabled = true;
+    if (res.final_group) {
+      const body = $("cxPlayerBody");
+      if (body) body.innerHTML = `<p class="locked">Puzzle complete! 🎉</p><p class="hint" style="text-align:center">Waiting for the host…</p>`;
+    }
+    ping("guesses");
+    return;
+  }
+  if (res && res.result === "already") {
     toast("Already tried that combo 🙂");
-  } else if (res && res.result === "wrong") {
+    reenable();
+    ping("guesses");
+    return;
+  }
+  if (res && res.result === "wrong") {
     Music.sting("wrong");
     const tried = new Set(words.map((w) => w.toUpperCase()));
-    document.querySelectorAll("#playContent .cx-tile").forEach((t) => {
-      if (tried.has(cxOrder[Number(t.dataset.i)])) t.classList.add("shake");
+    const shaken = [];
+    document.querySelectorAll("#cxPlayerGrid .cx-tile").forEach((t) => {
+      if (tried.has(t.textContent.toUpperCase())) { t.classList.add("shake"); shaken.push(t); }
     });
+    setTimeout(() => shaken.forEach((t) => t.classList.remove("shake")), 750);
     cxStatusMsg = res.one_away ? "One away… 👀" : "Not quite — try again.";
+    const dots = $("cxDots");
+    if (dots) dots.innerHTML = cxDotsHTML(cxMistakesFor(session.player_id));
+    const st = $("cxStatus");
+    if (st) st.textContent = cxStatusMsg;
     if (!res.one_away && !res.locked) toast("Nope — try again.");
     if (res.locked) toast("Locked out for this puzzle 😅");
     ping("guesses");
-    setTimeout(() => render(), 700);
+    if (res.locked) { cxSelKey = ""; render(); }  // structural: locked view
+    else { const sb = $("cxSubmit"); if (sb) sb.disabled = true; }
     return;
-  } else if (res && res.result === "locked") {
-    toast("You're locked out for this puzzle 😅");
-  } else {
-    toast("Hmm, that didn't go through — try again.");
   }
+  if (res && res.result === "locked") {
+    toast("You're locked out for this puzzle 😅");
+    ping("guesses");
+    cxSelKey = "";
+    render();
+    return;
+  }
+  toast("Hmm, that didn't go through — try again.");
   ping("guesses");
-  render();
+  reenable();
 }
 
 /* ---------------- share / copy ---------------- */
