@@ -469,7 +469,10 @@ async function otdbToken() {
 let selectedCats = []; // up to 3 OpenTDB category ids; empty = all categories
 async function loadCategories() {
   try {
-    const data = await otdbFetch("https://opentdb.com/api_category.php");
+    const pack = await loadTriviaPack();
+    const data = (pack && pack.categories && pack.categories.length)
+      ? { trivia_categories: pack.categories }
+      : await otdbFetch("https://opentdb.com/api_category.php");
     otdbCategories = data.trivia_categories || [];
     const box = $("catChips");
     box.innerHTML = "";
@@ -494,7 +497,47 @@ function toggleCat(id, el) {
   Music.sting("click");
 }
 const dec = (s) => { try { return decodeURIComponent(s); } catch { return s; } };
-async function fetchOpenTDBQuestions({ categories, category, difficulty, amount }) {
+/* ---------------- offline trivia pack (trivia-pack.json) ----------------
+   Primary question source: a full OpenTDB multiple-choice snapshot baked into
+   the repo, so trivia works with no network at all. The live OpenTDB fetch
+   below stays as a fallback if the pack can't be loaded. */
+let triviaPack = null, triviaPackPromise = null;
+function loadTriviaPack() {
+  if (triviaPack) return Promise.resolve(triviaPack);
+  if (!triviaPackPromise) {
+    triviaPackPromise = fetch(`trivia-pack.json?v=${BUILD}`)
+      .then((r) => { if (!r.ok) throw new Error("pack missing"); return r.json(); })
+      .then((p) => { triviaPack = p; return p; })
+      .catch(() => { triviaPackPromise = null; return null; });
+  }
+  return triviaPackPromise;
+}
+function pickFromPack(pack, { categories, category, difficulty, amount }) {
+  const cats = ((categories && categories.length ? categories : (category ? [category] : []))).map(Number);
+  let pool = cats.length ? pack.questions.filter((q) => cats.includes(q.category_id)) : pack.questions;
+  if (difficulty && pool.filter((q) => q.difficulty === difficulty).length >= amount) {
+    pool = pool.filter((q) => q.difficulty === difficulty);
+  }
+  // else: thin pool for this difficulty -> degrade to mixed (mirrors the live path dropping difficulty)
+  const picked = shuffle(pool.slice()).slice(0, amount);
+  return picked.map((q) => ({ category: q.category, question: q.question,
+    correct_answer: q.correct_answer, incorrect_answers: q.incorrect_answers.slice() }));
+}
+async function fetchPackQuestions(opts) {
+  const pack = await loadTriviaPack();
+  if (!pack || !pack.questions || !pack.questions.length) throw new Error("offline pack unavailable");
+  const qs = pickFromPack(pack, opts);
+  if (!qs.length) throw new Error("No questions available for those settings \u2014 try different ones.");
+  return qs;
+}
+async function fetchOpenTDBQuestions(opts) {
+  try {
+    return await fetchPackQuestions(opts);
+  } catch {
+    return fetchOpenTDBLive(opts); // offline pack missing/unusable -> live API fallback
+  }
+}
+async function fetchOpenTDBLive({ categories, category, difficulty, amount }) {
   // Up to 3 categories: split the request per category, fetch in parallel, interleave.
   const cats = ((categories && categories.length ? categories : (category ? [category] : []))).slice(0, 3).map(Number);
   if (cats.length <= 1) return fetchCat(cats[0] || null, difficulty, amount);
