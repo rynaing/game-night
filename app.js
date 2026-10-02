@@ -57,8 +57,8 @@ const Music = (() => {
   const LS = "gn_muted";
   const LS_VOL = "gn_volume";
   let ctx = null, master = null;
-  let muted = false;
-  try { muted = localStorage.getItem(LS) === "1"; } catch {}
+  let muted = (() => { try { const a = JSON.parse(localStorage.getItem('arcade-audio') || 'null'); if (a && typeof a.muted === 'boolean') return a.muted; } catch {} return false; })(); // shared arcade mute wins
+  try { if (!localStorage.getItem('arcade-audio')) muted = localStorage.getItem(LS) === "1"; } catch {}
   let volume = 0.5; // 0..1
   try {
     const v = parseInt(localStorage.getItem(LS_VOL), 10);
@@ -179,7 +179,7 @@ const Music = (() => {
     },
     toggleMute() {
       muted = !muted;
-      try { localStorage.setItem(LS, muted ? "1" : "0"); } catch {}
+      try { localStorage.setItem(LS, muted ? "1" : "0"); const a = JSON.parse(localStorage.getItem('arcade-audio') || '{}'); a.muted = muted; localStorage.setItem('arcade-audio', JSON.stringify(a)); } catch {}
       applyGain();
       return muted;
     },
