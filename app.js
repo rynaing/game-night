@@ -649,11 +649,22 @@ const anagramPoints = (len) => ({ 3: 100, 4: 200, 5: 400, 6: 800, 7: 1600, 8: 32
 /* ============================================================
    HOST FLOW
    ============================================================ */
+/* The arcade hub is the front door: each party game has its own card there that
+   opens ?game=<key> straight into that game's setup. "Home" means the arcade. */
+const ARCADE_URL = "https://rynaing.github.io/arcade/#game-night";
+const GAME_NAMES = { trivia: "Trivia", anagram: "Anagrams", mostlikely: "Most Likely To", commonthreads: "Common Threads", mathsprint: "Math Sprint", guesstimate: "Guesstimate" };
+const LAUNCH = new URLSearchParams(location.search);
+const LAUNCH_GAME = GAME_NAMES[LAUNCH.get("game")] ? LAUNCH.get("game") : null;
+let homeBooted = false;
 function initHome() {
   Music.setMode("home");
-  const params = new URLSearchParams(location.search);
+  const firstVisit = !homeBooted; homeBooted = true;
+  if (!firstVisit) { location.href = ARCADE_URL; return; }          // back / leave → the arcade
+  const params = LAUNCH;
   const code = (params.get("room") || "").toUpperCase();
   if (code) { joinWithCode(code); return; }
+  if (LAUNCH_GAME === "commonthreads" && params.get("solo")) { initSolo(); return; }
+  if (LAUNCH_GAME) { initSetup(LAUNCH_GAME); return; }
   // Don't force-resume an old session (that trapped users in the previous room).
   // Offer it as a choice instead, so starting/joining a new game never needs a fresh tab.
   const rb = $("resumeBox");
@@ -665,7 +676,7 @@ function initHome() {
     $("resumeDiscard").onclick = () => { session = null; saveSession(); rb.classList.add("hidden"); };
     rb.classList.remove("hidden");
   } else {
-    rb.classList.add("hidden");
+    location.replace(ARCADE_URL); return;   // nothing to resume: the arcade lists every game
   }
   show("view-home");
 }
@@ -681,21 +692,23 @@ async function resumeHost() {
   startHostBeat();
 }
 
-function initSetup() {
+function selectGame(g) {
+  document.querySelectorAll(".pick-card").forEach((x) => x.classList.toggle("selected", x.dataset.game === g));
+  pickedGame = g;
+  $("triviaSettings").classList.toggle("hidden", pickedGame !== "trivia");
+  $("anagramSettings").classList.toggle("hidden", pickedGame !== "anagram");
+  $("mltSettings").classList.toggle("hidden", pickedGame !== "mostlikely");
+  $("cxSettings").classList.toggle("hidden", pickedGame !== "commonthreads");
+  $("mathSettings").classList.toggle("hidden", pickedGame !== "mathsprint");
+  $("guesstimateSettings").classList.toggle("hidden", pickedGame !== "guesstimate");
+}
+function initSetup(only) {
   show("view-setup");
-  document.querySelectorAll(".pick-card").forEach((c) => {
-    c.onclick = () => {
-      document.querySelectorAll(".pick-card").forEach((x) => x.classList.remove("selected"));
-      c.classList.add("selected");
-      pickedGame = c.dataset.game;
-      $("triviaSettings").classList.toggle("hidden", pickedGame !== "trivia");
-      $("anagramSettings").classList.toggle("hidden", pickedGame !== "anagram");
-      $("mltSettings").classList.toggle("hidden", pickedGame !== "mostlikely");
-      $("cxSettings").classList.toggle("hidden", pickedGame !== "commonthreads");
-      $("mathSettings").classList.toggle("hidden", pickedGame !== "mathsprint");
-      $("guesstimateSettings").classList.toggle("hidden", pickedGame !== "guesstimate");
-    };
-  });
+  document.querySelectorAll(".pick-card").forEach((c) => { c.onclick = () => selectGame(c.dataset.game); });
+  // launched from the arcade for one game: no picker, just that game's settings
+  const one = only || LAUNCH_GAME;
+  document.querySelector(".game-pick").classList.toggle("hidden", !!one);
+  if (one) { selectGame(one); $("setupTitle").textContent = "Host " + GAME_NAMES[one]; }
   if (!otdbCategories.length) loadCategories();
 }
 
