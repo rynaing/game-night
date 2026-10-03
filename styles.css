@@ -1,21 +1,22 @@
 :root {
-  --bg: #14101f;
-  --bg-soft: #1e1830;
-  --card: #241d3d;
-  --text: #f4f1ff;
-  --muted: #a79fd1;
-  --accent: #8b5cf6;
-  --accent2: #22d3ee;
-  --good: #34d399;
-  --bad: #f87171;
-  --warn: #fbbf24;
+  /* Ryan Cake Studios palette (dark, TV-friendly): same plum + pink as the arcade's games */
+  --bg: #2c1236;
+  --bg-soft: #3a1a40;
+  --card: #4a2250;
+  --text: #fff6ef;
+  --muted: #e7c9dd;
+  --accent: #ff7ba9;
+  --accent2: #9ecdf2;
+  --good: #8fd6a8;
+  --bad: #ff8a8a;
+  --warn: #ffc46b;
   --radius: 16px;
 }
 * { box-sizing: border-box; }
 body {
   margin: 0;
-  font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
-  background: radial-gradient(1200px 800px at 50% -10%, #2b2150 0%, var(--bg) 60%);
+  font-family: var(--arc-font, "Baloo 2", "Trebuchet MS", system-ui, sans-serif);
+  background: radial-gradient(1200px 800px at 50% -10%, #6a2f78 0%, var(--bg) 62%);
   color: var(--text);
   min-height: 100vh;
   touch-action: manipulation; /* kill iOS double-tap zoom; pinch zoom still works */
