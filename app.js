@@ -2495,12 +2495,17 @@ async function renderPlayerGuesstimate(c) {
   const unit = q.unit ? " " + esc(q.unit) : "";
   $("playTimer").classList.remove("hidden");
   if (answered) {
+    delete c.dataset.guessFor;
     c.innerHTML = `<p class="q-cat">🔢 Guesstimate</p><p class="q-text" style="font-size:1.3rem">${esc(q.q)}</p>
       <p class="locked">Locked in! ✅</p>
       <div class="my-answer">Your guess:<br/><strong>${fmtNum(guesstimateNum(answered))}${unit}</strong></div>
       <p class="hint" style="text-align:center">Closest without going over wins…</p>`;
     return;
   }
+  // Every realtime update re-renders this view; rebuilding the input would wipe what the player has typed.
+  const gk = room.id + ":" + room.current_index;
+  if (c.dataset.guessFor === gk && $("guessInput") && !$("guessInput").disabled) return;
+  c.dataset.guessFor = gk;
   c.innerHTML = `<p class="q-cat">🔢 Guesstimate</p><p class="q-text" style="font-size:1.3rem">${esc(q.q)}</p>
     <div class="guess-row">
       <input id="guessInput" type="text" inputmode="numeric" pattern="[0-9,]*" placeholder="Your guess" autocomplete="off" />
