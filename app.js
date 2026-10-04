@@ -2167,7 +2167,7 @@ function wirePlayerControls() {
     const grid = $("cxPlayerGrid");
     if (grid) {
       grid.innerHTML = cxOrder.map((w) =>
-        `<button class="cx-tile${cxSelected.includes(w) ? " selected" : ""}>${esc(w)}</button>`).join("");
+        `<button class="cx-tile${cxSelected.includes(w) ? " selected" : ""}">${esc(w)}</button>`).join("");
       wirePlayerTiles();
     }
   };
