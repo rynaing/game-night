@@ -11,7 +11,11 @@ const sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
 
-const BUILD = "1790322522"; // deploy.sh replaces this with a timestamp
+// Build token = the ?v= on our own <script> tag, so it always matches index.html
+// (a hand-edited constant drifted and made the "new version" banner show forever).
+const BUILD = (() => {
+  try { return new URL(document.currentScript.src).searchParams.get("v") || "dev"; } catch { return "dev"; }
+})();
 
 // Stale-tab nudge: each deploy ships a fresh app.js?v= token, but a tab opened
 // before the deploy keeps running old code. Check for a newer build once a
@@ -758,6 +762,7 @@ function renderLobby() {
   $("lobbyQr").src = makeQr(joinUrl(room.room_code));
   $("lobbyUrl").textContent = joinUrl(room.room_code);
   $("lobbyCount").textContent = players.length;
+  document.querySelector("#view-lobby .attrib")?.classList.toggle("hidden", room.game_type !== "trivia"); // credit only where trivia is used
   $("lobbyPlayers").innerHTML = players.map((p) => `<li>${esc(p.name)}</li>`).join("") || `<li style="opacity:.6">Waiting for players…</li>`;
   $("stageNextBtn").classList.add("hidden");
   $("startGameBtn").disabled = false; // startGame() disables it; a fresh lobby is always startable
