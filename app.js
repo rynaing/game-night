@@ -658,7 +658,8 @@ const anagramPoints = (len) => ({ 3: 100, 4: 200, 5: 400, 6: 800, 7: 1600, 8: 32
 const ARCADE_URL = "https://rynaing.github.io/arcade/#game-night";
 const GAME_NAMES = { trivia: "Trivia", anagram: "Anagrams", mostlikely: "Most Likely To", commonthreads: "Common Threads", mathsprint: "Math Sprint", guesstimate: "Guesstimate" };
 const LAUNCH = new URLSearchParams(location.search);
-const LAUNCH_GAME = GAME_NAMES[LAUNCH.get("game")] ? LAUNCH.get("game") : null;
+const ARCHIVED_GAMES = ["anagram"]; // hidden from menus and ?game= links until the word list is cleaned up
+const LAUNCH_GAME = GAME_NAMES[LAUNCH.get("game")] && !ARCHIVED_GAMES.includes(LAUNCH.get("game")) ? LAUNCH.get("game") : null;
 let homeBooted = false;
 function initHome() {
   Music.setMode("home");
