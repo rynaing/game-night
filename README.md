@@ -14,3 +14,10 @@ Stack: static site on GitHub Pages + Supabase (Postgres + Realtime Broadcast). N
 ```
 { category, question, correct_answer, incorrect_answers[] }
 ```
+
+## Supabase client
+
+`vendor/supabase-js-<version>.umd.js` is a pinned, unmodified copy of the npm package's
+`dist/umd/supabase.js` (MIT, see `vendor/supabase-js-LICENSE.txt`), so new supabase-js releases
+never reach players untested. To upgrade: `npm pack @supabase/supabase-js@<new>`, copy
+`dist/umd/supabase.js` over, update the `<script>` path in `index.html`, and host one game before merging.
